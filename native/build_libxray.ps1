@@ -1,4 +1,4 @@
-# build_libxray.ps1
+﻿# build_libxray.ps1
 # 一键重编 Xray 内核 (libxray.a) 并拷贝到工程 cpp/thirdparty 目录。
 #
 # 前置：

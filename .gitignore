@@ -21,4 +21,7 @@
 /native/tools/ar.exe
 /entry/src/main/cpp/thirdparty/libxray/libs/
 /entry/src/main/cpp/thirdparty/libxray/include/
+
+# staged release artifacts (scripts/release.ps1)
+/dist/
 /entry/libs/
