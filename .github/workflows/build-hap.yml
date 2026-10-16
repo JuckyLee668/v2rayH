@@ -2,12 +2,29 @@ name: build-hap
 
 # 实验：在 GitHub 托管 runner 上用公开的 OpenHarmony SDK 编 HAP。
 #
+# 状态：**未跑通，卡在 SDK 许可协议那一步**。
+#
+# 已经打通的（都不显然，见 docs/build-notes.md §11）：
+#   - hvigor + hvigor-ohos-plugin 能从 repo.harmonyos.com/npm 装到
+#   - SDK 必须解到 <DEVECO_SDK_HOME>/default/openharmony/<apiVersion>/{ets,js,native,toolchains}
+#     （hvigor 的 getLocation() 会带上 apiVersion 这一层；少一层就报
+#      "The SDK management mode has changed"）
+#   - default/ 下要有 sdk-pkg.json，OpenHarmony 模式还要 compileSdkVersion
+#   - OpenHarmony SDK 里确实有 @ohos/net/vpnExtension.d.ts，所以 VPN 能力不是障碍
+#
+# 卡死的原因：许可接受记录是 <SDK根>/licenses/<licenseId>.sha256，
+# 内容 = 从华为许可服务下载的许可文本的 sha256。CI 里没有这份记录，
+# 而合成它等于复刻 hvigor 的 GRS 许可下载流程。
+#
+# 要往下走，只能其中一条：
+#   a) 在有 SDK Manager（能装 OH SDK 并接受许可）的机器上生成 licenses/ 并带进 CI
+#   b) 改用 self-hosted runner（你本机装了 DevEco）
+#   c) 继续复刻 GRS 许可协议（不推荐）
+#
 # 与本地 DevEco 构建的区别（只在 CI 内临时覆盖，不改仓库里的配置）：
 #   - runtimeOS:           HarmonyOS   -> OpenHarmony
 #   - compatibleSdkVersion 6.1.1(24)   -> 6.1.0(23)   （OH SDK 的 apiVersion 是 23）
 #   - targetSdkVersion     26.0.0      -> 6.1.0(23)
-#
-# 风险：工程里用到 API 24/26 的接口时会编不过；那时只能按报错逐个降级或加 apiAvailable 保护。
 
 on:
   workflow_dispatch:

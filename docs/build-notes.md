@@ -195,6 +195,56 @@ GitHub release tag 是 `v26.3.27`，Go module 版本是 `v1.260327.0`。
 
 ---
 
+## 11. 试过在托管 runner 上编 HAP（未跑通）
+
+目标很明确：让 GitHub Actions 直接产出可安装的 HAP，做成 ClashBox 那种 release。
+结论是**目前做不到**，但过程中挖出来的东西不显然，记下来免得重复踩。
+
+可行性判断：HarmonyOS 工程要鸿蒙 SDK，而它只随 DevEco Studio 分发，华为没有放到任何公开镜像
+（`repo.huaweicloud.com` 上只有 OpenHarmony SDK，和一个 13 KB 的 `ndk-1.0.tar.gz` 空壳）。
+所以只能绕到 OpenHarmony SDK。逐一验证：
+
+**能通的**
+
+| 事项 | 结果 |
+| --- | --- |
+| `@ohos/hvigor` / `@ohos/hvigor-ohos-plugin` | `repo.harmonyos.com/npm` 公开可拉，版本与本地一致（6.26.8） |
+| OH SDK 组件 | 2.5 GB 的容器里是分组件 zip：`ets` / `js` / `native` / `previewer` / `toolchains`，`apiVersion` 都是 23 |
+| VPN 能力 | `ets/api/@ohos.net.vpnExtension.d.ts` **存在** —— 之前最担心的点不成立 |
+| `hvigorfile.ts` 解析 | 必须把 hvigor 装进**工程目录**（node 从该文件往上找 `node_modules`），装到别处会 `Cannot find module '@ohos/hvigor-ohos-plugin'` |
+
+**踩到的坑（都不显然）**
+
+1. `For the OpenHarmony project, Please configure compileSdkVersion in the product`
+   —— `runtimeOS: "OpenHarmony"` 时 product 里必须有 `compileSdkVersion`，HarmonyOS 模式没这个字段。
+2. `00308018 The SDK management mode has changed`（报错信息极其误导）
+   —— 真因在 `@ohos/sdkmanager-common` 的 `getLocation()`：
+
+   ```js
+   if (isValidApiVersion(component.getFullApiVersion()))
+       return path.resolve(sdkRoot, `${fullApiVersion}`, componentPath);  // 带 apiVersion 这一层
+   return path.resolve(sdkRoot, componentPath);
+   ```
+
+   我们的组件都带 `apiVersion`，所以期望路径是 `openharmony/23/ets`，
+   而组件被平铺在 `openharmony/ets` → 被判为"位置不对" → 报成 SDK 模式变了。
+   顺带：`default/` 下还得有 `sdk-pkg.json`。另外**别用 symlink**（`path.resolve` 是词法比较）。
+3. `The SDK license agreement is not accepted` —— **真正卡死的地方**。
+
+**为什么卡死**
+
+许可接受记录是 `<SDK根>/licenses/<licenseId>.sha256`，内容必须等于
+**从华为许可服务实时下载的许可文本的 sha256**（见 `core/license/license-manager.js`）。
+CI 里没有这份记录，而合成它等于复刻 hvigor 的 GRS 许可查询/下载流程。
+本机也没有 `licenses/` 目录可拿（DevEco 自带的鸿蒙 SDK 不需要它）。
+
+即便绕过许可，后面还有 API 23 vs 工程实际使用的 24/26 接口的差距要挨个降级 —— 所以这条路性价比很低。
+
+**要真做到 Action 自动发 HAP，实际可行的是**：把装了 DevEco 的机器注册成 self-hosted runner，
+让 workflow 在那台机器上跑。或者本机跑 `scripts/release.ps1`（现状），产物和 notes 与 ClashBox 一致。
+
+---
+
 ## 附：一键重编
 
 ```bash
