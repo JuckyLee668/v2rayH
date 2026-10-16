@@ -99,7 +99,9 @@ jobs:
           p = 'build-profile.json5'
           src = open(p, encoding='utf-8').read()
           # build-profile 是 json5（带注释/尾逗号），这里用正则做定点替换就够了
-          src = src.replace('"runtimeOS": "HarmonyOS"', '"runtimeOS": "OpenHarmony"')
+          # OpenHarmony 模式要求 product 里有 compileSdkVersion（HarmonyOS 模式没有这个字段）
+          src = src.replace('"runtimeOS": "HarmonyOS"',
+                            '"runtimeOS": "OpenHarmony",\n        "compileSdkVersion": "%s"' % os.environ['SDK_API'])
           src = src.replace('"compatibleSdkVersion": "6.1.1(24)"',
                             '"compatibleSdkVersion": "%s"' % os.environ['SDK_API'])
           src = src.replace('"targetSdkVersion": "26.0.0"',
