@@ -20,4 +20,5 @@
 /native/tools/bin/
 /native/tools/ar.exe
 /entry/src/main/cpp/thirdparty/libxray/libs/
+/entry/src/main/cpp/thirdparty/libxray/include/
 /entry/libs/
