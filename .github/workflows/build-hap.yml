@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           node --version
           echo "DEVECO_SDK_HOME=$DEVECO_SDK_HOME"
-          ls "$DEVECO_SDK_HOME/default/openharmony/ets/api/@ohos.net.vpnExtension.d.ts"
+          ls "$DEVECO_SDK_HOME/default/openharmony/$SDK_API_NUM/ets/api/@ohos.net.vpnExtension.d.ts"
           echo "=== project files ==="
           ls -la
           echo "=== entry cpp thirdparty (needs libxray.a from CI) ==="
