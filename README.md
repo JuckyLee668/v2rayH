@@ -81,3 +81,7 @@ Pin bumps live in `env:` at the top of that workflow
 `native/libxray/go.mod` redirects `github.com/xtls/xray-core` and
 `gvisor.dev/gvisor` at the vendored copies via `replace`. Three overlays make
 them build and run on OpenHarmony — see `native/README.md`.
+
+For the full list of things that went wrong while getting this to build and run
+(initial-exec TLS vs musl, the cgo `CC` wrapper, the gVisor `fstat` denial, the
+routing loop, the CI packaging traps), see [`docs/build-notes.md`](docs/build-notes.md).
