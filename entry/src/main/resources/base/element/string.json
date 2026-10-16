@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "v2rayH entry module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "v2rayH"
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "v2rayH"
     }
   ]
 }
