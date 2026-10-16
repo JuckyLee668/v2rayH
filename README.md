@@ -76,6 +76,42 @@ Pin bumps live in `env:` at the top of that workflow
 > Note: CI only builds the native kernel. The HAP itself must be built locally
 > because the HarmonyOS app toolchain ships with DevEco Studio.
 
+## Releasing
+
+Releases carry an installable **unsigned `.hap`** — the convention ClashBox uses,
+since a signature is bound to one developer's certificate and device.
+
+**The HAP cannot be built in CI.** A HarmonyOS app needs the HarmonyOS SDK, which
+ships with DevEco Studio and is not published to any mirror, so GitHub's Linux
+runners cannot produce it. (`libxray.a` *is* built in CI; the release step just
+consumes whatever is already in `entry/src/main/cpp/thirdparty/libxray/`.)
+
+```powershell
+.\scripts\release.ps1                  # version from AppScope/app.json5
+.\scripts\release.ps1 -Version 0.2.0
+.\scripts\release.ps1 -SkipBuild -Draft
+.\scripts\release.ps1 -SkipBuild -DryRun
+```
+
+It builds, stages `dist/v2rayH-<ver>-unsigned.hap` plus a `.sha256`, then creates
+the tag and the Release using GitHub's auto-generated notes
+(`--generate-notes`). Drop a hand-written `docs/release-notes/<ver>.md` in place
+to use `--notes-file` instead.
+
+### Signing
+
+`build-profile.json5` deliberately carries **no** `signingConfigs`: they contain
+machine-specific paths and encrypted passwords. A fresh clone therefore builds an
+unsigned HAP, which is exactly what gets released.
+
+To install on your own device you still need a signature — let DevEco Studio
+generate one (Project Structure → Signing Configs → Automatically generate
+signature), then keep that local edit out of the way:
+
+```bash
+git update-index --skip-worktree build-profile.json5
+```
+
 ## OpenHarmony patches
 
 `native/libxray/go.mod` redirects `github.com/xtls/xray-core` and

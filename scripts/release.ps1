@@ -44,7 +44,7 @@ $Tag = "v$Version"
 Info "version = $Version    tag = $Tag"
 
 # ---- 前置检查 --------------------------------------------------------------
-$dirty = git status --porcelain
+$dirty = git status --porcelain | Where-Object { $_ -notmatch 'build-profile\.json5$' }
 if ($dirty) { Fail "工作区不干净，先提交或 stash：`n$dirty" }
 
 $branch = git rev-parse --abbrev-ref HEAD
@@ -97,35 +97,19 @@ $assets += $shaFile
 Info ("sha256   -> " + (Split-Path -Leaf $shaFile))
 
 # ---- release notes ---------------------------------------------------------
+# 默认交给 GitHub 自动生成（--generate-notes，按 commit/PR 汇总）。
+# 想手写就把 notes 放到 docs/release-notes/<版本>.md，脚本会改用 --notes-file。
 $notesFile = Join-Path $RepoRoot "docs/release-notes/$Version.md"
-if (Test-Path -LiteralPath $notesFile) {
-    $notes = Get-Content -LiteralPath $notesFile -Raw
+$useNotesFile = Test-Path -LiteralPath $notesFile
+if ($useNotesFile) {
     Info "notes 取自 docs/release-notes/$Version.md"
 } else {
-    $prev = (git tag --sort=-creatordate | Where-Object { $_ -ne $Tag } | Select-Object -First 1)
-    $range = if ($prev) { "$prev..HEAD" } else { "HEAD" }
-    $log = (git log $range --pretty=format:"- %s" --no-merges) -join "`n"
-    if (-not $log) { $log = "- 首个发布" }
-    $notes = @"
-## 安装
-
-1. 用你自己的证书给 ``v2rayH-$Version-unsigned.hap`` 签名（未签名包无法直接安装）。
-2. ``hdc install`` 或设备助手安装。
-3. 首次连接需要在系统弹窗里授予 VPN 权限。
-
-## 变更
-
-$log
-"@
-    Info "notes 由 git log 自动生成（范围 $range）"
+    Info "notes 交给 GitHub 自动生成（--generate-notes）"
 }
 
 # ---- 发布 ------------------------------------------------------------------
-$ghArgs = @(
-    "release", "create", $Tag,
-    "--title", "v2rayH $Version",
-    "--notes", $notes
-)
+$ghArgs = @("release", "create", $Tag, "--title", "v2rayH $Version")
+if ($useNotesFile) { $ghArgs += @("--notes-file", $notesFile) } else { $ghArgs += "--generate-notes" }
 if ($Draft) { $ghArgs += "--draft" }
 $ghArgs += $assets
 
