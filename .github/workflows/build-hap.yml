@@ -20,6 +20,7 @@ on:
 env:
   OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
   SDK_API: "6.1.0(23)"
+  SDK_API_NUM: "23"
 
 jobs:
   build-hap:
@@ -40,16 +41,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/deveco-sdk
-          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v2
+          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v3
 
       - name: Fetch OpenHarmony SDK (ets + js + native + toolchains)
         if: steps.sdk.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          # 直接解到最终位置。不要用 symlink：hvigor 会拿 path.resolve 出来的
-          # 期望路径和组件实际路径做精确比较，软链很容易在这里对不上。
-          ROOT="$RUNNER_TEMP/deveco-sdk/default/openharmony"
+          # 直接解到最终位置，且必须带 apiVersion 这一层。
+          # hvigor 的 getLocation() 是：
+          #   有合法 apiVersion 时 -> <sdkRoot>/<apiVersion>/<component>
+          #   否则                -> <sdkRoot>/<component>
+          # 我们的组件都带 apiVersion=23，所以必须放在 openharmony/23/{ets,js,native,toolchains}。
+          # symlink 也不要：路径是 path.resolve 出来的词法比较，软链容易对不上。
+          ROOT="$RUNNER_TEMP/deveco-sdk/default/openharmony/$SDK_API_NUM"
           URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
           mkdir -p "$ROOT"
           echo "downloading $URL"
@@ -92,9 +97,9 @@ jobs:
           JSON
           echo "DEVECO_SDK_HOME=$DEVECO" >> "$GITHUB_ENV"
           ls -la "$DEVECO/default" "$OH"
-          echo "=== component locations ==="
+          echo "=== component locations (expect $OH/$SDK_API_NUM/<name>) ==="
           for c in ets js native toolchains; do
-            echo "$c -> $OH/$c/oh-uni-package.json  $( [ -f "$OH/$c/oh-uni-package.json" ] && echo present || echo MISSING )"
+            echo "$c -> $OH/$SDK_API_NUM/$c/oh-uni-package.json  $( [ -f "$OH/$SDK_API_NUM/$c/oh-uni-package.json" ] && echo present || echo MISSING )"
           done
 
       - name: Install hvigor into the project
