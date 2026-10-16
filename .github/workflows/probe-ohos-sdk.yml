@@ -1,0 +1,91 @@
+name: probe-ohos-sdk
+
+# 一次性诊断（临时 workflow）：
+#   1. 公开的 OpenHarmony SDK 容器里到底有哪些组件 zip，解包后目录结构是什么
+#   2. hvigor 能否从公开 registry (repo.harmonyos.com/npm) 装到
+# 目的：判断「托管 runner 上编 HAP」是否可行，再决定要不要写正式的 build-hap job。
+
+on:
+  workflow_dispatch:
+
+env:
+  OHOS_SDK_VERSION: "6.1-Release"
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Download + extract SDK component zips
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
+          mkdir -p "$RUNNER_TEMP/dl"
+          echo "downloading $URL"
+          curl -fL --retry 3 --connect-timeout 30 -o "$RUNNER_TEMP/sdk.tar.gz" "$URL"
+          tar -xzf "$RUNNER_TEMP/sdk.tar.gz" -C "$RUNNER_TEMP/dl" --wildcards 'linux/*' || true
+          rm -f "$RUNNER_TEMP/sdk.tar.gz"
+          echo "=== container contents ==="
+          find "$RUNNER_TEMP/dl" -maxdepth 2 | sort | head -40
+          echo "=== component zips ==="
+          ls -la "$RUNNER_TEMP/dl/linux" || true
+
+      - name: Unzip and inspect SDK layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sdk"
+          shopt -s nullglob
+          for z in "$RUNNER_TEMP"/dl/linux/*.zip; do
+            echo "--- $(basename "$z")"
+            unzip -q "$z" -d "$RUNNER_TEMP/sdk" && echo "    ok" || echo "    FAILED"
+          done
+          echo "=== sdk dirs (depth 3) ==="
+          find "$RUNNER_TEMP/sdk" -maxdepth 3 -type d | sort | head -80
+          echo "=== top-level sizes ==="
+          du -sh "$RUNNER_TEMP/sdk"/* 2>/dev/null || true
+          echo "=== oh-uni-package.json ==="
+          find "$RUNNER_TEMP/sdk" -name 'oh-uni-package.json' | sort | while read -r f; do
+            echo "--- $f"
+            cat "$f"
+            echo
+          done
+          echo "=== does the SDK carry vpnExtension / kit defs? ==="
+          find "$RUNNER_TEMP/sdk" -name '*vpnExtension*' 2>/dev/null | head -10 || true
+          find "$RUNNER_TEMP/sdk" -maxdepth 4 -name 'kits' -type d 2>/dev/null | head -10 || true
+
+      - name: hvigor availability from public registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== dist-tags: @ohos/hvigor ==="
+          curl -fsSL "https://repo.harmonyos.com/npm/@ohos%2fhvigor" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('dist-tags'))" || echo "unreachable"
+          echo "=== dist-tags: @ohos/hvigor-ohos-plugin ==="
+          curl -fsSL "https://repo.harmonyos.com/npm/@ohos%2fhvigor-ohos-plugin" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('dist-tags'))" || echo "unreachable"
+
+      - name: Setup node and try installing hvigor
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm install hvigor from Huawei registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hv" && cd "$RUNNER_TEMP/hv"
+          npm init -y >/dev/null
+          npm config set registry https://repo.harmonyos.com/npm/
+          if npm install @ohos/hvigor@6.26.8 @ohos/hvigor-ohos-plugin@6.26.8 --no-audit --no-fund 2>&1 | tail -25; then
+            echo "INSTALL OK"
+          else
+            echo "INSTALL FAILED"
+          fi
+          echo "=== node_modules/@ohos ==="
+          ls node_modules/@ohos 2>/dev/null || true
+          echo "=== hvigor entry points ==="
+          find node_modules/@ohos/hvigor -maxdepth 3 -name 'hvigor*.js' 2>/dev/null | head -20 || true
+          echo "=== plugin bin ==="
+          cat node_modules/@ohos/hvigor-ohos-plugin/package.json 2>/dev/null | head -40 || true
