@@ -63,7 +63,7 @@ jobs:
           ls -la "$ROOT"
           test -d "$ROOT/ets" && test -d "$ROOT/toolchains"
 
-      - name: Stage SDK in the DevEco layout + install hvigor
+      - name: Stage SDK in the DevEco layout
         shell: bash
         run: |
           set -euo pipefail
@@ -74,13 +74,19 @@ jobs:
           echo "DEVECO_SDK_HOME=$DEVECO" >> "$GITHUB_ENV"
           ls -la "$DEVECO/default/openharmony"
 
-          HV="$RUNNER_TEMP/hvigor"
-          mkdir -p "$HV" && cd "$HV"
-          npm init -y >/dev/null
+      - name: Install hvigor into the project
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hvigorfile.ts 是 `import { appTasks } from '@ohos/hvigor-ohos-plugin'`，
+          # node 从该文件所在目录往上找 node_modules，所以必须装进工程目录
+          # （正常的 DevEco 工程也是这样，由 hvigorw 装出来）。
+          cd "$GITHUB_WORKSPACE"
+          [ -f package.json ] || echo '{"name":"v2rayH-build","private":true}' > package.json
           npm config set registry https://repo.harmonyos.com/npm/
-          npm install @ohos/hvigor@6.26.8 @ohos/hvigor-ohos-plugin@6.26.8 --no-audit --no-fund
-          echo "HVIGOR_BIN=$HV/node_modules/@ohos/hvigor/bin/hvigor.js" >> "$GITHUB_ENV"
-          node "$HV/node_modules/@ohos/hvigor/bin/hvigor.js" --version || true
+          npm install --no-audit --no-fund @ohos/hvigor@6.26.8 @ohos/hvigor-ohos-plugin@6.26.8
+          echo "HVIGOR_BIN=$GITHUB_WORKSPACE/node_modules/@ohos/hvigor/bin/hvigor.js" >> "$GITHUB_ENV"
+          node "$GITHUB_WORKSPACE/node_modules/@ohos/hvigor/bin/hvigor.js" --version || true
 
       - name: Apply OpenHarmony overrides
         shell: bash
@@ -123,7 +129,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node "$HVIGOR_BIN" --no-daemon assembleHap 2>&1 | tee "$RUNNER_TEMP/hvigor.log" | tail -120
+          cd "$GITHUB_WORKSPACE"
+          node "$HVIGOR_BIN" --no-daemon assembleHap 2>&1 | tee "$RUNNER_TEMP/hvigor.log" | tail -150
           echo "=== exit: ${PIPESTATUS[0]} ==="
           echo "=== outputs ==="
           find . -name '*.hap' -not -path './.git/*' 2>/dev/null | head -20 || true
