@@ -151,12 +151,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          vendored="$(sed -n 's#.*github.com/xtls/xray-core v\([0-9][^ ]*\).*#\1#p' native/libxray/go.mod | head -n1)"
-          latest="$(curl -fsSL https://api.github.com/repos/xtls/xray-core/releases/latest \
-                    | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-          echo "vendored=v${vendored}  upstream=${latest}"
-          [ -n "$latest" ] || { echo "::warning::could not resolve upstream tag"; exit 0; }
-          if [ "v${vendored}" = "$latest" ]; then
+          # Compare *Go module* versions, since that is what go.mod pins.
+          # Upstream's GitHub release tags use a different scheme entirely
+          # (tag v26.3.27 == module v1.260327.0), so the module proxy is the
+          # only apples-to-apples source.
+          vendored="$(awk '$1 == "require" && $2 == "github.com/xtls/xray-core" { print $3; exit }' native/libxray/go.mod)"
+          latest="$(curl -fsSL https://proxy.golang.org/github.com/xtls/xray-core/@latest | jq -r .Version)"
+          echo "vendored=${vendored}  latest=${latest}"
+          case "$latest" in ""|null) echo "::warning::could not resolve upstream module version"; exit 0 ;; esac
+          if [ "$vendored" = "$latest" ]; then
             echo "up to date"
             exit 0
           fi
@@ -167,8 +170,8 @@ jobs:
           fi
           gh issue create \
             --title "newer xray-core available: ${latest}" \
-            --body "Vendored \`go.mod\` pins \`v${vendored}\`; upstream latest is \`${latest}\`.
+            --body "Vendored \`go.mod\` pins \`${vendored}\`; upstream latest is \`${latest}\`.
 
-          To move up: re-vendor \`native/libxray/xray-core\` (+ \`gvisor\`) at the new tag,
-          re-apply the three OpenHarmony overrides (see \`native/README.md\`), bump
+          To move up: re-vendor \`native/libxray/xray-core\` (+ \`gvisor\`) at that module
+          version, re-apply the three OpenHarmony overrides (see \`native/README.md\`), bump
           \`XRAY_VERSION\` in \`.github/workflows/build-libxray.yml\`, then run this workflow."
