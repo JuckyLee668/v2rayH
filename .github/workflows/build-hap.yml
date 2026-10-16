@@ -39,15 +39,17 @@ jobs:
         id: sdk
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/ohos-sdk
-          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v1
+          path: ${{ runner.temp }}/deveco-sdk
+          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v2
 
       - name: Fetch OpenHarmony SDK (ets + js + native + toolchains)
         if: steps.sdk.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          ROOT="$RUNNER_TEMP/ohos-sdk"
+          # 直接解到最终位置。不要用 symlink：hvigor 会拿 path.resolve 出来的
+          # 期望路径和组件实际路径做精确比较，软链很容易在这里对不上。
+          ROOT="$RUNNER_TEMP/deveco-sdk/default/openharmony"
           URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
           mkdir -p "$ROOT"
           echo "downloading $URL"
@@ -67,13 +69,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # hvigor/DevEco 期望 $DEVECO_SDK_HOME/default/openharmony/{ets,js,native,toolchains}
           DEVECO="$RUNNER_TEMP/deveco-sdk"
-          mkdir -p "$DEVECO/default"
-          ln -sfn "$RUNNER_TEMP/ohos-sdk" "$DEVECO/default/openharmony"
+          OH="$DEVECO/default/openharmony"
 
           # 「新的 SDK 管理模式」的标志文件：DevEco 自带的 SDK 在 default/ 下有它，
-          # 没有它 hvigor 会直接报 00308018 The SDK management mode has changed。
+          # 没有它 hvigor 会报 00308018 The SDK management mode has changed。
           # 字段值取自各组件 oh-uni-package.json（apiVersion 23 / version 6.1.0.31），
           # OH 组件里没有 platformVersion 字段，这里按 version 推断。
           cat > "$DEVECO/default/sdk-pkg.json" <<'JSON'
@@ -91,7 +91,11 @@ jobs:
           }
           JSON
           echo "DEVECO_SDK_HOME=$DEVECO" >> "$GITHUB_ENV"
-          ls -la "$DEVECO/default" "$DEVECO/default/openharmony"
+          ls -la "$DEVECO/default" "$OH"
+          echo "=== component locations ==="
+          for c in ets js native toolchains; do
+            echo "$c -> $OH/$c/oh-uni-package.json  $( [ -f "$OH/$c/oh-uni-package.json" ] && echo present || echo MISSING )"
+          done
 
       - name: Install hvigor into the project
         shell: bash
