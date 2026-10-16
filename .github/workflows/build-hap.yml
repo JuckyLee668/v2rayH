@@ -1,0 +1,140 @@
+name: build-hap
+
+# 实验：在 GitHub 托管 runner 上用公开的 OpenHarmony SDK 编 HAP。
+#
+# 与本地 DevEco 构建的区别（只在 CI 内临时覆盖，不改仓库里的配置）：
+#   - runtimeOS:           HarmonyOS   -> OpenHarmony
+#   - compatibleSdkVersion 6.1.1(24)   -> 6.1.0(23)   （OH SDK 的 apiVersion 是 23）
+#   - targetSdkVersion     26.0.0      -> 6.1.0(23)
+#
+# 风险：工程里用到 API 24/26 的接口时会编不过；那时只能按报错逐个降级或加 apiAvailable 保护。
+
+on:
+  workflow_dispatch:
+    inputs:
+      ohos_sdk_version:
+        description: "OpenHarmony SDK release dir"
+        required: false
+        default: "6.1-Release"
+
+env:
+  OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
+  SDK_API: "6.1.0(23)"
+
+jobs:
+  build-hap:
+    name: assembleHap on hosted runner
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache OpenHarmony SDK
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ohos-sdk
+          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v1
+
+      - name: Fetch OpenHarmony SDK (ets + js + native + toolchains)
+        if: steps.sdk.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ohos-sdk"
+          URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
+          mkdir -p "$ROOT"
+          echo "downloading $URL"
+          curl -fL --retry 3 --connect-timeout 30 -o "$RUNNER_TEMP/sdk.tar.gz" "$URL"
+          tar -xzf "$RUNNER_TEMP/sdk.tar.gz" -C "$RUNNER_TEMP" --wildcards \
+            'linux/ets-*.zip' 'linux/js-*.zip' 'linux/native-*.zip' 'linux/toolchains-*.zip'
+          rm -f "$RUNNER_TEMP/sdk.tar.gz"
+          for z in "$RUNNER_TEMP"/linux/*.zip; do
+            echo "--- $(basename "$z")"
+            unzip -q "$z" -d "$ROOT"
+          done
+          rm -rf "$RUNNER_TEMP/linux"
+          ls -la "$ROOT"
+          test -d "$ROOT/ets" && test -d "$ROOT/toolchains"
+
+      - name: Stage SDK in the DevEco layout + install hvigor
+        shell: bash
+        run: |
+          set -euo pipefail
+          # hvigor/DevEco 期望 $DEVECO_SDK_HOME/default/openharmony/{ets,js,native,toolchains}
+          DEVECO="$RUNNER_TEMP/deveco-sdk"
+          mkdir -p "$DEVECO/default"
+          ln -sfn "$RUNNER_TEMP/ohos-sdk" "$DEVECO/default/openharmony"
+          echo "DEVECO_SDK_HOME=$DEVECO" >> "$GITHUB_ENV"
+          ls -la "$DEVECO/default/openharmony"
+
+          HV="$RUNNER_TEMP/hvigor"
+          mkdir -p "$HV" && cd "$HV"
+          npm init -y >/dev/null
+          npm config set registry https://repo.harmonyos.com/npm/
+          npm install @ohos/hvigor@6.26.8 @ohos/hvigor-ohos-plugin@6.26.8 --no-audit --no-fund
+          echo "HVIGOR_BIN=$HV/node_modules/@ohos/hvigor/bin/hvigor.js" >> "$GITHUB_ENV"
+          node "$HV/node_modules/@ohos/hvigor/bin/hvigor.js" --version || true
+
+      - name: Apply OpenHarmony overrides
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- before ---"
+          cat build-profile.json5
+          python3 - <<'PY'
+          import json, os, re
+          p = 'build-profile.json5'
+          src = open(p, encoding='utf-8').read()
+          # build-profile 是 json5（带注释/尾逗号），这里用正则做定点替换就够了
+          src = src.replace('"runtimeOS": "HarmonyOS"', '"runtimeOS": "OpenHarmony"')
+          src = src.replace('"compatibleSdkVersion": "6.1.1(24)"',
+                            '"compatibleSdkVersion": "%s"' % os.environ['SDK_API'])
+          src = src.replace('"targetSdkVersion": "26.0.0"',
+                            '"targetSdkVersion": "%s"' % os.environ['SDK_API'])
+          open(p, 'w', encoding='utf-8').write(src)
+          print('patched')
+          PY
+          echo "--- after ---"
+          cat build-profile.json5
+          # hvigor 也从 local.properties 找 SDK
+          printf 'sdk.dir=%s/default/openharmony\n' "$RUNNER_TEMP/deveco-sdk" > local.properties
+          cat local.properties
+
+      - name: hvigor doctor / env
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          echo "DEVECO_SDK_HOME=$DEVECO_SDK_HOME"
+          ls "$DEVECO_SDK_HOME/default/openharmony/ets/api/@ohos.net.vpnExtension.d.ts"
+          echo "=== project files ==="
+          ls -la
+          echo "=== entry cpp thirdparty (needs libxray.a from CI) ==="
+          ls -la entry/src/main/cpp/thirdparty/libxray/libs/arm64-v8a/ 2>/dev/null || echo "libxray.a MISSING"
+
+      - name: assembleHap
+        shell: bash
+        run: |
+          set -euo pipefail
+          node "$HVIGOR_BIN" --no-daemon assembleHap 2>&1 | tee "$RUNNER_TEMP/hvigor.log" | tail -120
+          echo "=== exit: ${PIPESTATUS[0]} ==="
+          echo "=== outputs ==="
+          find . -name '*.hap' -not -path './.git/*' 2>/dev/null | head -20 || true
+
+      - name: Upload hvigor log + any HAP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-build-log
+          path: |
+            ${{ runner.temp }}/hvigor.log
+            entry/build/default/outputs/**/*.hap
+          if-no-files-found: warn
+          retention-days: 14
