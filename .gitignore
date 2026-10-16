@@ -1,0 +1,23 @@
+/node_modules
+/oh_modules
+/local.properties
+/.idea
+**/build
+/.hvigor
+.cxx
+/.clangd
+/.clang-format
+/.clang-tidy
+**/.test
+/.appanalyzer
+/.cache
+/.clangd
+
+# --- native build outputs (rebuilt by native/build_libxray.{sh,ps1}) ---
+/native/libxray/libxray.a
+/native/libxray/libxray.h
+/native/tools/ccwrap.exe
+/native/tools/bin/
+/native/tools/ar.exe
+/entry/src/main/cpp/thirdparty/libxray/libs/
+/entry/libs/

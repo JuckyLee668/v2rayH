@@ -1,0 +1,21 @@
+# Vendored Go sources must keep LF everywhere (Windows checkouts included).
+* text=auto eol=lf
+
+# Binary assets — never normalise.
+*.png binary
+*.jpg binary
+*.webp binary
+*.gif binary
+*.dat binary
+*.a binary
+*.so binary
+*.dll binary
+*.exe binary
+*.jar binary
+*.zip binary
+*.rar binary
+*.har binary
+
+# Generated / toolchain files
+*.pb.go text
+go.sum text

@@ -1,0 +1,174 @@
+name: build-libxray
+
+# Builds the Xray kernel (libxray.a, openharmony/arm64) that gets statically linked
+# into entry/src/main/cpp -> libentry.so.
+#
+# The app itself (HAP) is still built locally with DevEco Studio; CI only produces
+# the native kernel. Drop the downloaded libxray.a + libxray.h into
+#   entry/src/main/cpp/thirdparty/libxray/{libs/arm64-v8a,include}/
+# then run `devecocli build`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ohos_sdk_version:
+        description: "OpenHarmony SDK release dir under repo.huaweicloud.com/openharmony/os/"
+        required: false
+        default: "6.1-Release"
+      ohos_go_version:
+        description: "sysit/ohos-go release tag providing a prebuilt linux-amd64 toolchain"
+        required: false
+        default: "v1.27.2-ohos-beta1"
+  push:
+    branches: [main]
+    paths:
+      - "native/libxray/**"
+      - "native/tools/**"
+      - ".github/workflows/build-libxray.yml"
+  schedule:
+    - cron: "0 3 * * 1"
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  issues: write
+
+env:
+  OHOS_GO_VERSION: ${{ github.event.inputs.ohos_go_version || 'v1.27.2-ohos-beta1' }}
+  OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
+  XRAY_VERSION: v1.260327.0
+
+jobs:
+  build:
+    name: libxray.a (openharmony/arm64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- OpenHarmony native SDK (clang + sysroot) -------------------------
+      # The published tarball is ~2.5 GB but is only a container of per-component
+      # zips; `linux/native-*.zip` is the only piece we need, so we extract just it.
+      - name: Cache OpenHarmony native SDK
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ohos-sdk
+          key: ohos-sdk-${{ env.OHOS_SDK_VERSION }}-native-v1
+
+      - name: Download OpenHarmony native SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ohos-sdk"
+          URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
+          mkdir -p "$ROOT"
+          echo "downloading $URL"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$RUNNER_TEMP/sdk.tar.gz" "$URL"
+          tar -xzf "$RUNNER_TEMP/sdk.tar.gz" -C "$RUNNER_TEMP" --wildcards 'linux/native-*.zip'
+          rm -f "$RUNNER_TEMP/sdk.tar.gz"
+          unzip -q "$RUNNER_TEMP"/linux/native-*.zip -d "$ROOT"
+          rm -rf "$RUNNER_TEMP/linux"
+          if [ ! -d "$ROOT/native" ]; then
+            inner="$(find "$ROOT" -type d -name native | head -n1)"
+            [ -n "$inner" ] || { echo "::error::native/ not found in the SDK zip"; exit 1; }
+            ln -s "$inner" "$ROOT/native"
+          fi
+          test -x "$ROOT/native/llvm/bin/clang"
+          test -x "$ROOT/native/llvm/bin/llvm-ar"
+          "$ROOT/native/llvm/bin/clang" --version | head -n1
+
+      # ---- ohos-go toolchain (Go with GOOS=openharmony support) -------------
+      - name: Cache ohos-go toolchain
+        id: gogo
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ohos-go
+          key: ohos-go-${{ env.OHOS_GO_VERSION }}-linux-amd64-v1
+
+      - name: Download ohos-go toolchain
+        if: steps.gogo.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/ohos-go"
+          ASSET="go${OHOS_GO_VERSION#v}-linux-amd64.tar.gz"
+          URL="https://github.com/sysit/ohos-go/releases/download/${OHOS_GO_VERSION}/${ASSET}"
+          mkdir -p "$ROOT"
+          echo "downloading $URL"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$RUNNER_TEMP/ohos-go.tar.gz" "$URL"
+          tar -xzf "$RUNNER_TEMP/ohos-go.tar.gz" -C "$ROOT" --strip-components=1
+          rm -f "$RUNNER_TEMP/ohos-go.tar.gz"
+          test -x "$ROOT/bin/go"
+          "$ROOT/bin/go" version
+
+      # ---- build -----------------------------------------------------------
+      - name: Build libxray.a
+        shell: bash
+        env:
+          OHOS_GO: ${{ runner.temp }}/ohos-go
+          OHOS_SDK: ${{ runner.temp }}/ohos-sdk
+        run: |
+          set -euo pipefail
+          chmod +x native/build_libxray.sh
+          STOCK_GO="$OHOS_GO/bin/go" bash native/build_libxray.sh
+          ls -lh native/libxray/libxray.a native/libxray/libxray.h
+
+      - name: Upload libxray.a
+        uses: actions/upload-artifact@v4
+        with:
+          name: libxray-${{ env.XRAY_VERSION }}-ohos-arm64
+          path: |
+            native/libxray/libxray.a
+            native/libxray/libxray.h
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            native/libxray/libxray.a native/libxray/libxray.h --clobber
+
+  # ---- weekly: tell us when upstream Xray moves ----------------------------
+  check-upstream:
+    name: check for a newer xray-core
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compare vendored xray-core with upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          vendored="$(sed -n 's#.*github.com/xtls/xray-core v\([0-9][^ ]*\).*#\1#p' native/libxray/go.mod | head -n1)"
+          latest="$(curl -fsSL https://api.github.com/repos/xtls/xray-core/releases/latest \
+                    | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+          echo "vendored=v${vendored}  upstream=${latest}"
+          [ -n "$latest" ] || { echo "::warning::could not resolve upstream tag"; exit 0; }
+          if [ "v${vendored}" = "$latest" ]; then
+            echo "up to date"
+            exit 0
+          fi
+          open="$(gh issue list --state open --search "in:title newer xray-core" --json number --jq 'length')"
+          if [ "$open" != "0" ]; then
+            echo "issue already open"
+            exit 0
+          fi
+          gh issue create \
+            --title "newer xray-core available: ${latest}" \
+            --body "Vendored \`go.mod\` pins \`v${vendored}\`; upstream latest is \`${latest}\`.
+
+          To move up: re-vendor \`native/libxray/xray-core\` (+ \`gvisor\`) at the new tag,
+          re-apply the three OpenHarmony overrides (see \`native/README.md\`), bump
+          \`XRAY_VERSION\` in \`.github/workflows/build-libxray.yml\`, then run this workflow."
