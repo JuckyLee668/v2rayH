@@ -1,5 +1,5 @@
 import { vpnExtension } from '@kit.NetworkKit';
-import { Want, common, ConfigurationConstant } from '@kit.AbilityKit';
+import { Want, common, ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
@@ -62,6 +62,7 @@ export class AppState {
   connected: boolean = false;
   pings: number[] = [];
   coreVersion: string = '';
+  appVersion: string = '0.2.0';
   exitIp: string = '';
   ipBusy: boolean = false;
   ipError: string = '';
@@ -97,6 +98,11 @@ export class AppState {
     this.ensureGeoFiles(ctx);
     this.refreshGeoSize();
     this.coreVersion = testNapi.getCoreVersion();
+    try {
+      this.appVersion = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT).versionName;
+    } catch (e) {
+      console.error('read versionName failed: ' + JSON.stringify(e));
+    }
   }
 
   isDark(): boolean {

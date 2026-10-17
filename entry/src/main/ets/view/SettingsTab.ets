@@ -157,7 +157,7 @@ export struct SettingsTab {
       Column() {
         this.infoRow('应用名称', 'v2rayH')
         this.dividerLine()
-        this.infoRow('版本', '0.1.0')
+        this.infoRow('版本', this.app.appVersion)
         this.dividerLine()
         this.infoRow('内核', 'libxray (Xray-core)')
         this.dividerLine()
