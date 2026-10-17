@@ -108,4 +108,85 @@ export class AppStore {
       return '';
     }
   }
+
+  dirPath(): string {
+    return this.dir;
+  }
+
+  exists(name: string): boolean {
+    try {
+      return fs.accessSync(this.dir + '/' + name);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  sizeOf(name: string): number {
+    try {
+      let path = this.dir + '/' + name;
+      if (!fs.accessSync(path)) {
+        return 0;
+      }
+      return fs.statSync(path).size;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  mtimeOf(name: string): number {
+    try {
+      let path = this.dir + '/' + name;
+      if (!fs.accessSync(path)) {
+        return 0;
+      }
+      return fs.statSync(path).mtime * 1000;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  readText(name: string): string {
+    try {
+      let path = this.dir + '/' + name;
+      if (!fs.accessSync(path)) {
+        return '';
+      }
+      let stat = fs.statSync(path);
+      if (stat.size === 0) {
+        return '';
+      }
+      let f = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fs.readSync(f.fd, buf);
+      fs.closeSync(f);
+      return buffer.from(buf).toString('utf-8');
+    } catch (e) {
+      console.error('readText failed: ' + name + ' ' + JSON.stringify(e));
+      return '';
+    }
+  }
+
+  writeText(name: string, text: string): boolean {
+    try {
+      let f = fs.openSync(this.dir + '/' + name, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(f.fd, text);
+      fs.closeSync(f);
+      return true;
+    } catch (e) {
+      console.error('writeText failed: ' + name + ' ' + JSON.stringify(e));
+      return false;
+    }
+  }
+
+  writeBytesTo(path: string, data: ArrayBuffer): boolean {
+    try {
+      let f = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(f.fd, data);
+      fs.closeSync(f);
+      return true;
+    } catch (e) {
+      console.error('writeBytes failed: ' + path + ' ' + JSON.stringify(e));
+      return false;
+    }
+  }
 }

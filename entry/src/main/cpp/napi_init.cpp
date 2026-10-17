@@ -1,6 +1,8 @@
 #include "napi/native_api.h"
 #include "libxray.h"
 
+#define XRAY_CORE_VERSION "v1.260327.0"
+
 static napi_value NativeStartXray(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
@@ -44,6 +46,13 @@ static napi_value NativeGetLastError(napi_env env, napi_callback_info info)
 
     napi_value ret;
     napi_create_string_utf8(env, msg != nullptr ? msg : "", NAPI_AUTO_LENGTH, &ret);
+    return ret;
+}
+
+static napi_value NativeGetCoreVersion(napi_env env, napi_callback_info info)
+{
+    napi_value ret;
+    napi_create_string_utf8(env, XRAY_CORE_VERSION, NAPI_AUTO_LENGTH, &ret);
     return ret;
 }
 
@@ -150,6 +159,7 @@ static napi_value Init(napi_env env, napi_value exports)
         { "stopXray", nullptr, NativeStopXray, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "isXrayRunning", nullptr, NativeIsXrayRunning, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "getLastError", nullptr, NativeGetLastError, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "getCoreVersion", nullptr, NativeGetCoreVersion, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "startVpnTun", nullptr, NativeStartVpnTun, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stopVpn", nullptr, NativeStopVpn, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "measureDelay", nullptr, NativeMeasureDelay, nullptr, nullptr, nullptr, napi_default, nullptr },

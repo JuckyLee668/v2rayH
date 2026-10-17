@@ -4,6 +4,8 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
 import testNapi from 'libentry.so';
 
+const SELF_BUNDLE: string = 'com.xii.v2rayh';
+
 export default class MyVpnExtAbility extends VpnExtensionAbility {
   private vpnConnection: vpnExtension.VpnConnection | undefined = undefined;
   private logFile: string = '';
@@ -78,13 +80,9 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
 
     try {
       let p1 = this.context.filesDir + '/xray_error.log';
-      let p2 = this.context.filesDir + '/xray_access.log';
       try { fs.unlinkSync(p1); } catch (e) {}
-      try { fs.unlinkSync(p2); } catch (e) {}
       let f1 = fs.openSync(p1, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
       fs.closeSync(f1);
-      let f2 = fs.openSync(p2, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
-      fs.closeSync(f2);
     } catch (e) {
       this.log('pre-create log failed: ' + JSON.stringify(e));
     }
@@ -106,7 +104,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
       }],
       dnsAddresses: ['8.8.8.8', '8.8.4.4'],
       mtu: 1400,
-      blockedApplications: ['com.xii.v2rayh']
+      blockedApplications: [SELF_BUNDLE]
     };
 
     this.log('calling create(config)');

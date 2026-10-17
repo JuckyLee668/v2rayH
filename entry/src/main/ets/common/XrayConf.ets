@@ -1,4 +1,5 @@
 import { ServerConfig } from '../model/ServerConfig';
+import { RoutingOptions } from '../model/ProxyOptions';
 
 function q(s: string): string {
   let r = s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -74,22 +75,71 @@ function buildProxyOutbound(s: ServerConfig): string {
 }
 
 const TUN_INBOUND: string = '{"tag":"tun-in","protocol":"tun","settings":{"name":"vpn-tun","MTU":1400,"userLevel":0}}';
+const LOCAL_PROXY_INBOUND: string = '{"tag":"http-in","protocol":"http","listen":"127.0.0.1","port":10809,"settings":{"auth":"noauth"}}';
 const DIRECT_OUTBOUND: string = '{"protocol":"freedom","tag":"direct"}';
-const ROUTING: string = '{"domainStrategy":"IPIfNonMatch","rules":[{"type":"field","ip":["geoip:private"],"outboundTag":"direct"},{"type":"field","domain":["geosite:cn"],"outboundTag":"direct"},{"type":"field","ip":["geoip:cn"],"outboundTag":"direct"}]}';
+const BLOCK_OUTBOUND: string = '{"protocol":"blackhole","tag":"block"}';
+
+function toDomainRule(raw: string): string {
+  let t = raw.trim();
+  if (t.length === 0) {
+    return '';
+  }
+  if (t.startsWith('geosite:') || t.startsWith('domain:') || t.startsWith('full:')
+    || t.startsWith('regexp:') || t.startsWith('keyword:') || t.startsWith('ext:')) {
+    return q(t);
+  }
+  return q('domain:' + t);
+}
+
+function domainList(items: string[]): string {
+  let out: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    let d = toDomainRule(items[i]);
+    if (d.length > 0) {
+      out.push(d);
+    }
+  }
+  return '[' + out.join(',') + ']';
+}
+
+function buildRouting(r: RoutingOptions): string {
+  let rules: string[] = [];
+  rules.push('{"type":"field","inboundTag":["http-in"],"outboundTag":"proxy"}');
+  rules.push('{"type":"field","ip":["geoip:private"],"outboundTag":"direct"}');
+  if (r.blockAds) {
+    rules.push('{"type":"field","domain":["geosite:category-ads-all"],"outboundTag":"block"}');
+  }
+  if (r.bypassCn) {
+    rules.push('{"type":"field","domain":["geosite:cn"],"outboundTag":"direct"}');
+    rules.push('{"type":"field","ip":["geoip:cn"],"outboundTag":"direct"}');
+  }
+  if (r.directDomains.length > 0) {
+    rules.push('{"type":"field","domain":' + domainList(r.directDomains) + ',"outboundTag":"direct"}');
+  }
+  if (r.proxyDomains.length > 0) {
+    rules.push('{"type":"field","domain":' + domainList(r.proxyDomains) + ',"outboundTag":"proxy"}');
+  }
+  let strategy = r.domainStrategy.length > 0 ? r.domainStrategy : 'IPIfNonMatch';
+  return '{"domainStrategy":' + q(strategy) + ',"rules":[' + rules.join(',') + ']}';
+}
 
 export function buildTestConfig(server: ServerConfig): string {
   return '{' + q('outbounds') + ':[' + buildProxyOutbound(server) + ']}';
 }
 
-export function buildXrayConfig(server: ServerConfig, logErrorPath: string): string {
-  let logCfg = '{' + q('loglevel') + ':' + q('warning');
+export function buildXrayConfig(server: ServerConfig, logErrorPath: string, routing: RoutingOptions): string {
+  let logCfg = '{' + q('loglevel') + ':' + q('error');
   if (logErrorPath.length > 0) {
     logCfg += ',' + q('error') + ':' + q(logErrorPath);
   }
   logCfg += '}';
+  let outbounds = buildProxyOutbound(server) + ',' + DIRECT_OUTBOUND;
+  if (routing.blockAds) {
+    outbounds += ',' + BLOCK_OUTBOUND;
+  }
   return '{' + q('log') + ':' + logCfg
-    + ',' + q('inbounds') + ':[' + TUN_INBOUND + ']'
-    + ',' + q('outbounds') + ':[' + buildProxyOutbound(server) + ',' + DIRECT_OUTBOUND + ']'
-    + ',' + q('routing') + ':' + ROUTING
+    + ',' + q('inbounds') + ':[' + TUN_INBOUND + ',' + LOCAL_PROXY_INBOUND + ']'
+    + ',' + q('outbounds') + ':[' + outbounds + ']'
+    + ',' + q('routing') + ':' + buildRouting(routing)
     + '}';
 }
