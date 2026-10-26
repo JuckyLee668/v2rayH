@@ -87,9 +87,25 @@ One-time bootstrap (the CLT archive is behind Huawei's download portal):
 
 1. Download `commandline-tools-linux-x64-26.0.0.zip` from
    <https://developer.huawei.com/consumer/cn/download/>.
-2. Either create a release tagged `clt` and upload the zip as an asset, or set
-   the `CLT_ARCHIVE_URL` repository variable to a direct URL. (GitHub release
-   assets are capped at 2 GB; use `CLT_ARCHIVE_URL` if the zip is larger.)
+2. If the zip is under GitHub's 2 GB per-asset limit, create a release tagged
+   `clt` and upload it, or set `CLT_ARCHIVE_URL` to a direct URL.
+   If it is larger, split it and upload the parts to the `clt` release; the
+   workflow reassembles them automatically:
+
+   ```bash
+   split -b 1900M -d -a 2 commandline-tools-linux-x64-26.0.0.zip \
+     commandline-tools-linux-x64-26.0.0.zip.part
+   gh release create clt commandline-tools-linux-x64-26.0.0.zip.part*
+   # or, if the release already exists:
+   gh release upload clt commandline-tools-linux-x64-26.0.0.zip.part* --clobber
+   ```
+
+   On Windows, run the `split` command in Git Bash, or use 7-Zip's
+   "Split to volumes" (1900M), which produces `.zip.001`, `.zip.002`, … —
+   both naming schemes are reassembled by the workflow.
+
+   `CLT_ARCHIVE_URL` must point to a single archive on a host that accepts
+   larger files (S3/R2/OSS, etc.).
 3. Run `build-hap`. The workflow caches the extracted CLT and `libxray.a`, so
    subsequent runs only rebuild the app.
 

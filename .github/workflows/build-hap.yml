@@ -101,27 +101,57 @@ jobs:
           zip=""
           if [ -n "${CLT_URL:-}" ]; then
             echo "downloading CLT from CLT_ARCHIVE_URL"
-            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$RUNNER_TEMP/clt.zip" "$CLT_URL"
-            zip="$RUNNER_TEMP/clt.zip"
+            case "${CLT_URL%%\?*}" in
+              *.tar.gz|*.tgz) out="$RUNNER_TEMP/clt.tar.gz" ;;
+              *) out="$RUNNER_TEMP/clt.zip" ;;
+            esac
+            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$out" "$CLT_URL"
+            zip="$out"
           else
-            echo "CLT_ARCHIVE_URL is empty; trying the 'clt' release asset"
-            if gh release download clt --pattern '*command*tools*.zip' --pattern '*command*tools*.tar.gz' --dir "$RUNNER_TEMP/clt-download" --clobber; then
-              zip="$(find "$RUNNER_TEMP/clt-download" -maxdepth 1 \( -name '*.zip' -o -name '*.tar.gz' \) | head -n1)"
+            echo "CLT_ARCHIVE_URL is empty; trying the 'clt' release assets"
+            # A single archive is preferred. If it is >2 GB (GitHub's per-asset
+            # limit), upload it as split parts instead, e.g.:
+            #   split -b 1900M -d -a 2 <clt.zip> <clt.zip>.part
+            # The workflow reassembles *.part* / *.zip.NNN in name order.
+            gh release download clt \
+              --pattern '*.zip' \
+              --pattern '*.tar.gz' \
+              --pattern '*.part*' \
+              --pattern '*.zip.[0-9]*' \
+              --dir "$RUNNER_TEMP/clt-download" --clobber || true
+
+            single="$(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print -quit)"
+            if [ -n "$single" ]; then
+              zip="$single"
+            else
+              mapfile -t parts < <(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.part*' -o -name '*.zip.[0-9]*' \) | sort -V)
+              if [ "${#parts[@]}" -gt 0 ]; then
+                echo "joining ${#parts[@]} CLT archive parts"
+                out="$RUNNER_TEMP/clt.zip"
+                cat "${parts[@]}" > "$out"
+                zip="$out"
+              fi
             fi
           fi
 
           if [ -z "$zip" ]; then
-            echo "::error::Command Line Tools archive not found. Upload commandline-tools-linux-x64-${CLT_VERSION}.zip to a release tagged 'clt', or set the CLT_ARCHIVE_URL repository variable."
+            echo "::error::Command Line Tools archive not found. For archives >2 GB, split them (split -b 1900M -d -a 2 <zip> <zip>.part) and upload the parts to a release tagged 'clt'; alternatively set CLT_ARCHIVE_URL to a host that accepts large files."
             exit 1
           fi
+
+          echo "checking $(basename "$zip")"
+          case "$zip" in
+            *.zip) unzip -t "$zip" >/dev/null ;;
+            *.tar.gz|*.tgz) tar -tzf "$zip" >/dev/null ;;
+            *) echo "::error::unsupported CLT archive type: $zip"; exit 1 ;;
+          esac
 
           echo "extracting $(basename "$zip")"
           case "$zip" in
             *.zip) unzip -q "$zip" -d "$RUNNER_TEMP/clt-extract" ;;
             *.tar.gz|*.tgz) tar -xzf "$zip" -C "$RUNNER_TEMP/clt-extract" ;;
-            *) echo "::error::unsupported CLT archive type: $zip"; exit 1 ;;
           esac
-          src="$(find "$RUNNER_TEMP/clt-extract" -maxdepth 3 -type d -name 'command-line-tools' | head -n1)"
+          src="$(find "$RUNNER_TEMP/clt-extract" -maxdepth 3 -type d -name 'command-line-tools' -print -quit)"
           [ -n "$src" ] || src="$RUNNER_TEMP/clt-extract"
           mv "$src" "$root"
 
@@ -153,7 +183,7 @@ jobs:
           devecocli --version
           "$RUNNER_TEMP/command-line-tools/tool/node/bin/node" --version
           test -f "$RUNNER_TEMP/command-line-tools/sdk/default/openharmony/ets/api/@ohos.net.vpnExtension.d.ts"
-          echo "HarmonyOS SDK: $(cat "$RUNNER_TEMP/command-line-tools/sdk/default/sdk-pkg.json" 2>/dev/null | head -c 300)"
+          echo "HarmonyOS SDK: $(head -c 300 "$RUNNER_TEMP/command-line-tools/sdk/default/sdk-pkg.json" 2>/dev/null)"
 
       # libxray.a is gitignored, so a clean checkout needs it from a release
       # asset or a local build. Cache it to make repeated HAP builds fast.
@@ -229,7 +259,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -e "const fs=require('fs');const s=fs.readFileSync('AppScope/app.json5','utf8');const m=s.match(/\x22versionName\x22\s*:\s*\x22([^\x22]+)\x22/);if(!m)process.exit(1);console.log(m[1])")"
-          hap="$(find entry/build -type f -name '*-unsigned.hap' | head -n1)"
+          hap="$(find entry/build -type f -name '*-unsigned.hap' -print -quit)"
           [ -n "$hap" ] || { echo "::error::no unsigned HAP produced"; find entry/build -type f -name '*.hap' || true; exit 1; }
           mkdir -p dist
           out="dist/v2rayH-${version}-unsigned.hap"
