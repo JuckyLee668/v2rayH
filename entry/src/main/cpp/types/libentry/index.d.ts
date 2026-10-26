@@ -6,3 +6,4 @@ export const getCoreVersion: () => string;
 export const startVpnTun: (fd: number, config: string, assetDir: string) => number;
 export const stopVpn: () => number;
 export const measureDelay: (config: string, testUrl: string) => Promise<number>;
+export const measureDownload: (config: string, testUrl: string, maxBytes: number) => Promise<number>;

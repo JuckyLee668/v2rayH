@@ -59,8 +59,13 @@ export class AppState {
   status: string = '';
   subUrl: string = '';
   busy: boolean = false;
+  testing: boolean = false;
   connected: boolean = false;
   pings: number[] = [];
+  downloadTesting: boolean = false;
+  downloadBps: number = 0;
+  downloadNodeKey: string = '';
+  downloadError: string = '';
   coreVersion: string = '';
   appVersion: string = '0.2.0';
   exitIp: string = '';
@@ -361,6 +366,32 @@ export class AppState {
     return p.toString() + 'ms';
   }
 
+  private nodeKey(idx: number): string {
+    if (idx < 0 || idx >= this.servers.length) {
+      return '';
+    }
+    let s: ServerConfig = this.servers[idx];
+    return s.name + '|' + s.address + ':' + s.port.toString();
+  }
+
+  downloadMbps(): number {
+    return this.downloadBps * 8 / 1000000;
+  }
+
+  downloadResultText(): string {
+    if (this.downloadNodeKey.length === 0 || this.downloadNodeKey !== this.nodeKey(this.selected)) {
+      return '';
+    }
+    if (this.downloadError.length > 0) {
+      return this.downloadError;
+    }
+    if (this.downloadBps <= 0) {
+      return '';
+    }
+    let mbs: number = this.downloadBps / 1024 / 1024;
+    return '下载 ' + this.downloadMbps().toFixed(2) + ' Mbps · ' + mbs.toFixed(2) + ' MB/s';
+  }
+
   selectServer(idx: number): void {
     if (idx < 0 || idx >= this.servers.length) {
       return;
@@ -507,7 +538,7 @@ export class AppState {
   }
 
   async testAll(): Promise<void> {
-    if (this.servers.length === 0 || this.busy) {
+    if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
       return;
     }
     let init: number[] = [];
@@ -516,20 +547,75 @@ export class AppState {
     }
     this.pings = init;
     this.busy = true;
+    this.testing = true;
     this.status = '正在测速(经代理实测延迟)...';
-    for (let i = 0; i < this.servers.length; i++) {
-      let srv: ServerConfig = this.servers[i];
-      let cfg: string = buildTestConfig(srv);
-      let ms: number = await testNapi.measureDelay(cfg, 'http://www.gstatic.com/generate_204');
-      let copy: number[] = [];
-      for (let j = 0; j < this.pings.length; j++) {
-        copy.push(this.pings[j]);
+    try {
+      for (let i = 0; i < this.servers.length; i++) {
+        let srv: ServerConfig = this.servers[i];
+        let ms: number = -1;
+        try {
+          let cfg: string = buildTestConfig(srv);
+          ms = await testNapi.measureDelay(cfg, 'http://www.gstatic.com/generate_204');
+        } catch (e) {
+          ms = -1;
+        }
+        let copy: number[] = [];
+        for (let j = 0; j < this.pings.length; j++) {
+          copy.push(this.pings[j]);
+        }
+        copy[i] = ms;
+        this.pings = copy;
+        this.status = '正在测速 ' + (i + 1).toString() + '/' + this.servers.length.toString() + '...';
       }
-      copy[i] = ms;
-      this.pings = copy;
+      this.status = '测速完成';
+    } finally {
+      this.busy = false;
+      this.testing = false;
     }
-    this.busy = false;
-    this.status = '测速完成';
+  }
+
+  async testDownload(): Promise<void> {
+    if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
+      return;
+    }
+    let srv: ServerConfig | undefined = this.currentNode();
+    if (srv === undefined) {
+      return;
+    }
+    this.downloadTesting = true;
+    this.downloadBps = 0;
+    this.downloadError = '';
+    this.downloadNodeKey = this.nodeKey(this.selected);
+    this.busy = true;
+    this.status = '正在下载测速: ' + srv.name;
+    try {
+      let cfg: string = buildTestConfig(srv);
+      let bps: number = -1;
+      let urls: string[] = [
+        'http://speed.cloudflare.com/__down?bytes=20000000',
+        'http://cachefly.cachefly.net/10mb.test'
+      ];
+      for (let i = 0; i < urls.length; i++) {
+        try {
+          bps = await testNapi.measureDownload(cfg, urls[i], 20 * 1024 * 1024);
+        } catch (e) {
+          bps = -1;
+        }
+        if (bps > 0) {
+          break;
+        }
+      }
+      if (bps > 0) {
+        this.downloadBps = bps;
+        this.status = '下载测速完成';
+      } else {
+        this.downloadError = '下载测速失败，请检查节点';
+        this.status = this.downloadError;
+      }
+    } finally {
+      this.downloadTesting = false;
+      this.busy = false;
+    }
   }
 
   // ---------- connection ----------

@@ -122,9 +122,10 @@ One-time bootstrap (the CLT archive is behind Huawei's download portal):
 3. Run `build-hap`. The workflow caches the extracted CLT and `libxray.a`, so
    subsequent runs only rebuild the app.
 
-`libxray.a` is gitignored. The workflow reads it from the release selected by
-`libxray_tag` (default: latest release), falling back to building it from source
-with `ohos-go` when no release asset exists.
+`libxray.a` is gitignored. On a cache miss the workflow builds it from source
+with `ohos-go`, so changes under `native/` are always included. Set
+`libxray_tag` to reuse a known-good `libxray.a`/`libxray.h` release asset
+instead (faster, but it must be rebuilt when the native code changes).
 
 > A self-hosted runner with DevEco Studio also works: set
 > `DEVECO_CLI_STUDIO_PATH` and run `devecocli build`. The checked-in workflow

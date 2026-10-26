@@ -896,7 +896,7 @@ export struct ConfigTab {
               .fontWeight(FontWeight.Medium)
               .fontColor(AppTheme.TEXT)
             Blank()
-            Button(this.app.busy ? '更新中...' : '立即更新')
+            Button(this.app.downloadTesting ? '下载测速中...' : (this.app.testing ? '测速中...' : (this.app.busy ? '更新中...' : '立即更新')))
               .fontSize(12)
               .height(30)
               .fontColor(AppTheme.PRIMARY)

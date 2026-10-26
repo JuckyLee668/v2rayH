@@ -151,6 +151,69 @@ static napi_value NativeMeasureDelay(napi_env env, napi_callback_info info)
     return promise;
 }
 
+struct DownloadWork {
+    napi_async_work work;
+    napi_deferred deferred;
+    char *cfg;
+    char *url;
+    int64_t maxBytes;
+    double result;
+};
+
+static void DownloadExecute(napi_env env, void *data)
+{
+    DownloadWork *w = static_cast<DownloadWork *>(data);
+    w->result = MeasureDownload(w->cfg, w->url, w->maxBytes);
+}
+
+static void DownloadComplete(napi_env env, napi_status status, void *data)
+{
+    DownloadWork *w = static_cast<DownloadWork *>(data);
+    napi_value result;
+    napi_create_double(env, w->result, &result);
+    napi_resolve_deferred(env, w->deferred, result);
+    napi_delete_async_work(env, w->work);
+    delete[] w->cfg;
+    delete[] w->url;
+    delete w;
+}
+
+static napi_value NativeMeasureDownload(napi_env env, napi_callback_info info)
+{
+    size_t argc = 3;
+    napi_value args[3] = { nullptr, nullptr, nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    size_t len1 = 0;
+    napi_get_value_string_utf8(env, args[0], nullptr, 0, &len1);
+    char *cfg = new char[len1 + 1];
+    napi_get_value_string_utf8(env, args[0], cfg, len1 + 1, &len1);
+
+    size_t len2 = 0;
+    napi_get_value_string_utf8(env, args[1], nullptr, 0, &len2);
+    char *url = new char[len2 + 1];
+    napi_get_value_string_utf8(env, args[1], url, len2 + 1, &len2);
+
+    int64_t maxBytes = 0;
+    napi_get_value_int64(env, args[2], &maxBytes);
+
+    DownloadWork *w = new DownloadWork();
+    w->cfg = cfg;
+    w->url = url;
+    w->maxBytes = maxBytes;
+    w->result = -1;
+
+    napi_value promise;
+    napi_create_promise(env, &w->deferred, &promise);
+
+    napi_value resourceName;
+    napi_create_string_utf8(env, "MeasureDownload", NAPI_AUTO_LENGTH, &resourceName);
+    napi_create_async_work(env, nullptr, resourceName, DownloadExecute, DownloadComplete, w, &w->work);
+    napi_queue_async_work(env, w->work);
+
+    return promise;
+}
+
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports)
 {
@@ -163,6 +226,7 @@ static napi_value Init(napi_env env, napi_value exports)
         { "startVpnTun", nullptr, NativeStartVpnTun, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "stopVpn", nullptr, NativeStopVpn, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "measureDelay", nullptr, NativeMeasureDelay, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "measureDownload", nullptr, NativeMeasureDownload, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

@@ -147,4 +147,60 @@ func MeasureDelay(configJSON *C.char, testURL *C.char) C.longlong {
 	return C.longlong(time.Since(start).Milliseconds())
 }
 
+//export MeasureDownload
+func MeasureDownload(configJSON *C.char, testURL *C.char, maxBytes C.longlong) C.double {
+	cfg := C.GoString(configJSON)
+	urlStr := C.GoString(testURL)
+	limit := int64(maxBytes)
+	if limit <= 0 {
+		limit = 20 * 1024 * 1024
+	}
+	inst, err := core.StartInstance("json", []byte(cfg))
+	if err != nil {
+		vpnLog("measure download start failed: " + err.Error())
+		return C.double(-1)
+	}
+	defer inst.Close()
+
+	transport := &http.Transport{
+		DisableCompression: true,
+		DialContext: func(ctx context.Context, network string, addr string) (net.Conn, error) {
+			dest, derr := xnet.ParseDestination(network + ":" + addr)
+			if derr != nil {
+				return nil, derr
+			}
+			return core.Dial(ctx, inst, dest)
+		},
+	}
+	client := &http.Client{Transport: transport, Timeout: 25 * time.Second}
+	resp, err := client.Get(urlStr)
+	if err != nil {
+		vpnLog("measure download request failed: " + err.Error())
+		return C.double(-1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		vpnLog("measure download status: " + strconv.Itoa(resp.StatusCode))
+		return C.double(-1)
+	}
+
+	buf := make([]byte, 32*1024)
+	var total int64
+	start := time.Now()
+	for total < limit {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			total += int64(n)
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	elapsed := time.Since(start).Seconds()
+	if total <= 0 || elapsed <= 0 {
+		return C.double(-1)
+	}
+	return C.double(float64(total) / elapsed)
+}
+
 func main() {}

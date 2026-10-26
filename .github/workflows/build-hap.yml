@@ -15,9 +15,9 @@ name: build-hap
 #   The workflow then runs fully automatically on tags/releases.
 #
 # Other inputs:
-#   - `libxray_tag`: release containing `libxray.a` + `libxray.h`. If omitted,
-#     the latest release is tried; if that has no assets, the kernel is built
-#     from source with ohos-go (the same script as build-libxray.yml).
+#   - `libxray_tag`: optional release containing `libxray.a` + `libxray.h`.
+#     If omitted, the kernel is built from source with ohos-go on a cache miss
+#     (the same script as build-libxray.yml), so native changes are included.
 #
 # The HAP is intentionally unsigned: the signing material is machine-specific.
 
@@ -54,9 +54,9 @@ jobs:
     name: unsigned HAP (HarmonyOS 6.0+)
     runs-on: ubuntu-22.04
     timeout-minutes: 120
-    # The `clt` release only hosts the Command Line Tools archive; don't try to
-    # attach a HAP to it when that release is published.
-    if: github.event_name != 'release' || github.event.release.tag_name != 'clt'
+    # Only app releases (v*) should build/attach a HAP; skip `clt`/`libxray`
+    # infrastructure releases.
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -214,18 +214,17 @@ jobs:
           dst="entry/src/main/cpp/thirdparty/libxray"
           mkdir -p "$dst/libs/arm64-v8a" "$dst/include" "$RUNNER_TEMP/libxray"
 
-          args=()
           if [ -n "${LIBXRAY_TAG:-}" ]; then
-            args+=("$LIBXRAY_TAG")
-          fi
-          if gh release download "${args[@]}" --pattern libxray.a --pattern libxray.h --dir "$RUNNER_TEMP/libxray" --clobber 2>/dev/null; then
-            echo "using libxray from release ${LIBXRAY_TAG:-<latest>}"
-            cp "$RUNNER_TEMP/libxray/libxray.a" "$dst/libs/arm64-v8a/libxray.a"
-            cp "$RUNNER_TEMP/libxray/libxray.h" "$dst/include/libxray.h"
-            exit 0
+            echo "trying libxray from release ${LIBXRAY_TAG}"
+            if gh release download "${LIBXRAY_TAG}" --pattern libxray.a --pattern libxray.h --dir "$RUNNER_TEMP/libxray" --clobber 2>/dev/null; then
+              cp "$RUNNER_TEMP/libxray/libxray.a" "$dst/libs/arm64-v8a/libxray.a"
+              cp "$RUNNER_TEMP/libxray/libxray.h" "$dst/include/libxray.h"
+              exit 0
+            fi
+            echo "release asset unavailable; falling back to source build"
           fi
 
-          echo "release asset unavailable; building libxray.a from source"
+          echo "building libxray.a from source"
           osgo="$RUNNER_TEMP/ohos-go"
           asset="go${OHOS_GO_VERSION#v}-linux-amd64.tar.gz"
           url="https://github.com/sysit/ohos-go/releases/download/${OHOS_GO_VERSION}/${asset}"

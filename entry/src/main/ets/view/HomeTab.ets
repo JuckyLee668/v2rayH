@@ -107,6 +107,82 @@ export struct HomeTab {
     .margin({ top: 16, bottom: 8 })
   }
 
+  private testSubtitle(): string {
+    if (this.app.testing) {
+      return '正在经代理实测延迟...';
+    }
+    if (this.app.downloadTesting) {
+      return '正在下载 20MB 测试文件...';
+    }
+    let srv: ServerConfig | undefined = this.app.currentNode();
+    if (srv !== undefined) {
+      return '下载测速节点: ' + srv.name;
+    }
+    return '';
+  }
+
+  @Builder
+  testPanel() {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text('节点测速')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+          Text(this.testSubtitle())
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        Button(this.app.testing ? '测速中' : '延迟')
+          .type(ButtonType.Capsule)
+          .height(30)
+          .fontSize(12)
+          .fontColor(this.app.testing ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
+          .backgroundColor(this.app.testing ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+          .padding({ left: 12, right: 12 })
+          .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+          .onClick(() => {
+            this.app.testAll();
+          })
+
+        Button(this.app.downloadTesting ? '下载中' : '下载')
+          .type(ButtonType.Capsule)
+          .height(30)
+          .fontSize(12)
+          .fontColor(this.app.downloadTesting ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
+          .backgroundColor(this.app.downloadTesting ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+          .padding({ left: 12, right: 12 })
+          .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+          .onClick(() => {
+            this.app.testDownload();
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      if (this.app.downloadResultText().length > 0) {
+        Text(this.app.downloadResultText())
+          .fontSize(12)
+          .fontColor(this.app.downloadError.length > 0 ? AppTheme.DANGER : AppTheme.PRIMARY)
+          .width('100%')
+          .textAlign(TextAlign.End)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+    }
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+    .backgroundColor(AppTheme.CARD_BG)
+    .borderRadius(14)
+    .margin({ bottom: 8 })
+  }
+
   @Builder
   nodeRow(item: ServerConfig, idx: number) {
     Row() {
@@ -170,6 +246,10 @@ export struct HomeTab {
       this.header()
 
       this.groupSelector()
+
+      if (this.app.servers.length > 0) {
+        this.testPanel()
+      }
 
       if (this.app.servers.length === 0) {
         this.emptyNodes()
