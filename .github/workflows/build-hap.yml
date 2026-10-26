@@ -109,8 +109,9 @@ jobs:
             zip="$out"
           else
             echo "CLT_ARCHIVE_URL is empty; trying the 'clt' release assets"
-            # A single archive is preferred. If it is >2 GB (GitHub's per-asset
-            # limit), upload it as split parts instead, e.g.:
+            # Prefer split parts when present; otherwise use a single archive.
+            # If the single archive is >2 GB (GitHub's per-asset limit),
+            # upload it as split parts instead, e.g.:
             #   split -b 1900M -d -a 2 <clt.zip> <clt.zip>.part
             # The workflow reassembles *.part* / *.zip.NNN in name order.
             gh release download clt \
@@ -120,17 +121,17 @@ jobs:
               --pattern '*.zip.[0-9]*' \
               --dir "$RUNNER_TEMP/clt-download" --clobber || true
 
-            single="$(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print -quit)"
-            if [ -n "$single" ]; then
-              zip="$single"
+            # Parts win over a single archive so that `.part00.zip` names
+            # (renamed for GitHub's web uploader) are reassembled correctly.
+            mapfile -t parts < <(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.part*' -o -name '*.zip.[0-9]*' \) | sort -V)
+            if [ "${#parts[@]}" -gt 0 ]; then
+              echo "joining ${#parts[@]} CLT archive parts"
+              out="$RUNNER_TEMP/clt.zip"
+              cat "${parts[@]}" > "$out"
+              zip="$out"
             else
-              mapfile -t parts < <(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.part*' -o -name '*.zip.[0-9]*' \) | sort -V)
-              if [ "${#parts[@]}" -gt 0 ]; then
-                echo "joining ${#parts[@]} CLT archive parts"
-                out="$RUNNER_TEMP/clt.zip"
-                cat "${parts[@]}" > "$out"
-                zip="$out"
-              fi
+              single="$(find "$RUNNER_TEMP/clt-download" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print -quit)"
+              zip="$single"
             fi
           fi
 

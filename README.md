@@ -104,6 +104,19 @@ One-time bootstrap (the CLT archive is behind Huawei's download portal):
    "Split to volumes" (1900M), which produces `.zip.001`, `.zip.002`, … —
    both naming schemes are reassembled by the workflow.
 
+   > GitHub's **web uploader** rejects `.part00` / `.001` with “We don't
+   > support that file type.” That restriction is on the web UI only;
+   > `gh release upload` accepts any filename. If you must use the web UI,
+   > append `.zip` to every part first (the file contents are unchanged):
+   >
+   > ```bash
+   > for f in commandline-tools-linux-x64-26.0.0.zip.part*; do mv "$f" "$f.zip"; done
+   > # 7-Zip volumes: for f in *.zip.[0-9][0-9][0-9]; do mv "$f" "$f.zip"; done
+   > ```
+   >
+   > Then upload the `*.part*.zip` / `*.zip.NNN.zip` files. The workflow
+   > concatenates them in name order.
+
    `CLT_ARCHIVE_URL` must point to a single archive on a host that accepts
    larger files (S3/R2/OSS, etc.).
 3. Run `build-hap`. The workflow caches the extracted CLT and `libxray.a`, so
