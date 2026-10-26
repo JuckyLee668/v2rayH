@@ -10,7 +10,7 @@ Traffic flow:
 apps ──► vpn-tun (VpnExtensionAbility) ──► gVisor netstack (L3→L4)
      ──► Xray VLESS+REALITY outbound ──► internet
 ```
-
+![](intro.jpg)
 ## Layout
 
 | Path | What |
