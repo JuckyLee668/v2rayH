@@ -195,10 +195,19 @@ GitHub release tag 是 `v26.3.27`，Go module 版本是 `v1.260327.0`。
 
 ---
 
-## 11. 试过在托管 runner 上编 HAP（未跑通）
+## 11. 在托管 runner 上编 HAP（已解决）
 
 目标很明确：让 GitHub Actions 直接产出可安装的 HAP，做成 ClashBox 那种 release。
-结论是**目前做不到**，但过程中挖出来的东西不显然，记下来免得重复踩。
+
+**结论：已解决。** 早期试的是公开 OpenHarmony SDK + 手工 hvigor，卡在 SDK 许可协议；
+现在改用华为 **Command Line Tools（CLT for Linux）**：它内嵌 HarmonyOS SDK，
+`devecocli`（npm `@deveco/deveco-cli`）官方支持 Linux，只要把
+`DEVECO_CLI_CLT_PATH` 指向解压后的 `command-line-tools` 即可。CLT 只需一次性
+放进 tag 为 `clt` 的 release（或配置 `CLT_ARCHIVE_URL`），之后
+`.github/workflows/build-hap.yml` 会全自动构建未签名 HAP 并发 release。
+详见 README 的 CI 一节。
+
+下面是早期 OpenHarmony SDK 路线的记录（历史，供参考）：
 
 可行性判断：HarmonyOS 工程要鸿蒙 SDK，而它只随 DevEco Studio 分发，华为没有放到任何公开镜像
 （`repo.huaweicloud.com` 上只有 OpenHarmony SDK，和一个 13 KB 的 `ndk-1.0.tar.gz` 空壳）。
@@ -240,8 +249,8 @@ CI 里没有这份记录，而合成它等于复刻 hvigor 的 GRS 许可查询/
 
 即便绕过许可，后面还有 API 23 vs 工程实际使用的 24/26 接口的差距要挨个降级 —— 所以这条路性价比很低。
 
-**要真做到 Action 自动发 HAP，实际可行的是**：把装了 DevEco 的机器注册成 self-hosted runner，
-让 workflow 在那台机器上跑。或者本机跑 `scripts/release.ps1`（现状），产物和 notes 与 ClashBox 一致。
+**早期结论**：当时可行的是 self-hosted runner，或本机跑 `scripts/release.ps1`。
+现在托管 Linux runner + CLT 已经能直接出包，本机脚本保留给一次性构建/调试用。
 
 ---
 

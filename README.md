@@ -61,30 +61,56 @@ devecocli build
 devecocli run --skip-build
 ```
 
+`build-profile.json5` sets `compatibleSdkVersion` to `6.0.0(20)`, so the HAP
+installs on HarmonyOS 6.0 and later. The project compiles against the installed
+API 26 SDK; code that uses an API newer than 6.0 is guarded at runtime (see
+`@compatibility/api-compatibility-check` in `code-linter.json5`).
+
 ## CI
 
-`.github/workflows/build-libxray.yml` runs on manual dispatch, on
-`native/**` changes, on release publishes, and weekly. It downloads the two
-toolchains above (both cached), builds `libxray.a`, uploads it as an artifact,
-and attaches it to the release. The weekly run also opens an issue when
-`xtls/xray-core` publishes a newer tag than the one vendored in
-`native/libxray/go.mod`.
+Two workflows:
 
-Pin bumps live in `env:` at the top of that workflow
-(`OHOS_GO_VERSION`, `OHOS_SDK_VERSION`, `XRAY_VERSION`).
+- `.github/workflows/build-libxray.yml` — builds the Xray kernel
+  (`libxray.a`) and attaches it to releases.
+- `.github/workflows/build-hap.yml` — builds the **unsigned HAP** with
+  `devecocli` on `ubuntu-22.04` and publishes it when a release is published
+  (or on manual dispatch).
 
-> Note: CI only builds the native kernel. The HAP itself must be built locally
-> because the HarmonyOS app toolchain ships with DevEco Studio.
+### How the HAP is built without DevEco Studio
+
+Huawei's **Command Line Tools** (CLT) for Linux embed the HarmonyOS SDK, and
+`devecocli` officially supports Linux when `DEVECO_CLI_CLT_PATH` points at the
+extracted CLT. That replaces the old "OpenHarmony SDK + hvigor license
+workaround" attempt.
+
+One-time bootstrap (the CLT archive is behind Huawei's download portal):
+
+1. Download `commandline-tools-linux-x64-26.0.0.zip` from
+   <https://developer.huawei.com/consumer/cn/download/>.
+2. Either create a release tagged `clt` and upload the zip as an asset, or set
+   the `CLT_ARCHIVE_URL` repository variable to a direct URL. (GitHub release
+   assets are capped at 2 GB; use `CLT_ARCHIVE_URL` if the zip is larger.)
+3. Run `build-hap`. The workflow caches the extracted CLT and `libxray.a`, so
+   subsequent runs only rebuild the app.
+
+`libxray.a` is gitignored. The workflow reads it from the release selected by
+`libxray_tag` (default: latest release), falling back to building it from source
+with `ohos-go` when no release asset exists.
+
+> A self-hosted runner with DevEco Studio also works: set
+> `DEVECO_CLI_STUDIO_PATH` and run `devecocli build`. The checked-in workflow
+> targets the hosted Linux + CLT path.
 
 ## Releasing
 
 Releases carry an installable **unsigned `.hap`** — the convention ClashBox uses,
 since a signature is bound to one developer's certificate and device.
 
-**The HAP cannot be built in CI.** A HarmonyOS app needs the HarmonyOS SDK, which
-ships with DevEco Studio and is not published to any mirror, so GitHub's Linux
-runners cannot produce it. (`libxray.a` *is* built in CI; the release step just
-consumes whatever is already in `entry/src/main/cpp/thirdparty/libxray/`.)
+`build-hap.yml` produces the unsigned HAP in CI. Publish a GitHub Release (or
+dispatch the workflow with `publish: true`); it attaches
+`v2rayH-<ver>-unsigned.hap` and `v2rayH-<ver>.sha256` to the release.
+
+Local releases still work:
 
 ```powershell
 .\scripts\release.ps1                  # version from AppScope/app.json5

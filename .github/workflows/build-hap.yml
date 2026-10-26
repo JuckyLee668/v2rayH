@@ -1,194 +1,270 @@
 name: build-hap
 
-# 实验：在 GitHub 托管 runner 上用公开的 OpenHarmony SDK 编 HAP。
+# Build an unsigned HAP on a GitHub-hosted Linux runner with `devecocli`.
 #
-# 状态：**未跑通，卡在 SDK 许可协议那一步**。
+# Why this works now (the previous attempt used the public OpenHarmony SDK and
+# got stuck on hvigor's SDK license check):
+#   - `devecocli` (npm `@deveco/deveco-cli`) is pure JS and officially supports
+#     Linux when `DEVECO_CLI_CLT_PATH` points at Huawei's Command Line Tools.
+#   - Command Line Tools >= 26.0.0 embeds the HarmonyOS SDK, so no separate SDK
+#     download, no license synthesis, and no DevEco Studio install is needed.
 #
-# 已经打通的（都不显然，见 docs/build-notes.md §11）：
-#   - hvigor + hvigor-ohos-plugin 能从 repo.harmonyos.com/npm 装到
-#   - SDK 必须解到 <DEVECO_SDK_HOME>/default/openharmony/<apiVersion>/{ets,js,native,toolchains}
-#     （hvigor 的 getLocation() 会带上 apiVersion 这一层；少一层就报
-#      "The SDK management mode has changed"）
-#   - default/ 下要有 sdk-pkg.json，OpenHarmony 模式还要 compileSdkVersion
-#   - OpenHarmony SDK 里确实有 @ohos/net/vpnExtension.d.ts，所以 VPN 能力不是障碍
+# One-time bootstrap (the CLT zip is behind Huawei's download portal):
+#   Put `commandline-tools-linux-x64-26.0.0.zip` in a release tagged `clt`, or
+#   set a repository variable `CLT_ARCHIVE_URL` to a direct/download URL.
+#   The workflow then runs fully automatically on tags/releases.
 #
-# 卡死的原因：许可接受记录是 <SDK根>/licenses/<licenseId>.sha256，
-# 内容 = 从华为许可服务下载的许可文本的 sha256。CI 里没有这份记录，
-# 而合成它等于复刻 hvigor 的 GRS 许可下载流程。
+# Other inputs:
+#   - `libxray_tag`: release containing `libxray.a` + `libxray.h`. If omitted,
+#     the latest release is tried; if that has no assets, the kernel is built
+#     from source with ohos-go (the same script as build-libxray.yml).
 #
-# 要往下走，只能其中一条：
-#   a) 在有 SDK Manager（能装 OH SDK 并接受许可）的机器上生成 licenses/ 并带进 CI
-#   b) 改用 self-hosted runner（你本机装了 DevEco）
-#   c) 继续复刻 GRS 许可协议（不推荐）
-#
-# 与本地 DevEco 构建的区别（只在 CI 内临时覆盖，不改仓库里的配置）：
-#   - runtimeOS:           HarmonyOS   -> OpenHarmony
-#   - compatibleSdkVersion 6.1.1(24)   -> 6.1.0(23)   （OH SDK 的 apiVersion 是 23）
-#   - targetSdkVersion     26.0.0      -> 6.1.0(23)
+# The HAP is intentionally unsigned: the signing material is machine-specific.
 
 on:
   workflow_dispatch:
     inputs:
-      ohos_sdk_version:
-        description: "OpenHarmony SDK release dir"
+      clt_archive_url:
+        description: "Optional URL for commandline-tools-linux-x64-<ver>.zip (overrides CLT_ARCHIVE_URL)"
         required: false
-        default: "6.1-Release"
+        default: ""
+      libxray_tag:
+        description: "Optional release tag holding libxray.a/libxray.h (empty = latest release)"
+        required: false
+        default: ""
+      publish:
+        description: "Create/update a GitHub Release with the unsigned HAP"
+        type: boolean
+        required: false
+        default: false
+  release:
+    types: [published]
+
+permissions:
+  contents: write
 
 env:
-  OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
-  SDK_API: "6.1.0(23)"
-  SDK_API_NUM: "23"
+  CLT_VERSION: "26.0.0"
+  DEVECO_CLI_VERSION: "1.3.9"
+  DEVECO_CLI_SKIP_VERSION_CHECK: "1"
+  OHOS_GO_VERSION: "v1.27.2-ohos-beta1"
 
 jobs:
   build-hap:
-    name: assembleHap on hosted runner
+    name: unsigned HAP (HarmonyOS 6.0+)
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
+    # The `clt` release only hosts the Command Line Tools archive; don't try to
+    # attach a HAP to it when that release is published.
+    if: github.event_name != 'release' || github.event.release.tag_name != 'clt'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup node
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
-      - name: Cache OpenHarmony SDK
-        id: sdk
+      # hvigor 26.x expects JDK 21 when driven by Command Line Tools.
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Linux native deps
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev unzip
+
+      - name: Cache Command Line Tools
+        id: clt-cache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/deveco-sdk
-          key: ohos-full-sdk-${{ env.OHOS_SDK_VERSION }}-v3
+          path: ${{ runner.temp }}/command-line-tools
+          key: clt-linux-x64-${{ env.CLT_VERSION }}-v1
 
-      - name: Fetch OpenHarmony SDK (ets + js + native + toolchains)
-        if: steps.sdk.outputs.cache-hit != 'true'
+      - name: Download Command Line Tools
+        if: steps.clt-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLT_URL: ${{ inputs.clt_archive_url || vars.CLT_ARCHIVE_URL || secrets.CLT_ARCHIVE_URL }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/command-line-tools"
+          rm -rf "$root" "$RUNNER_TEMP/clt-extract" "$RUNNER_TEMP/clt-download"
+          mkdir -p "$RUNNER_TEMP/clt-extract" "$RUNNER_TEMP/clt-download"
+
+          zip=""
+          if [ -n "${CLT_URL:-}" ]; then
+            echo "downloading CLT from CLT_ARCHIVE_URL"
+            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$RUNNER_TEMP/clt.zip" "$CLT_URL"
+            zip="$RUNNER_TEMP/clt.zip"
+          else
+            echo "CLT_ARCHIVE_URL is empty; trying the 'clt' release asset"
+            if gh release download clt --pattern '*command*tools*.zip' --pattern '*command*tools*.tar.gz' --dir "$RUNNER_TEMP/clt-download" --clobber; then
+              zip="$(find "$RUNNER_TEMP/clt-download" -maxdepth 1 \( -name '*.zip' -o -name '*.tar.gz' \) | head -n1)"
+            fi
+          fi
+
+          if [ -z "$zip" ]; then
+            echo "::error::Command Line Tools archive not found. Upload commandline-tools-linux-x64-${CLT_VERSION}.zip to a release tagged 'clt', or set the CLT_ARCHIVE_URL repository variable."
+            exit 1
+          fi
+
+          echo "extracting $(basename "$zip")"
+          case "$zip" in
+            *.zip) unzip -q "$zip" -d "$RUNNER_TEMP/clt-extract" ;;
+            *.tar.gz|*.tgz) tar -xzf "$zip" -C "$RUNNER_TEMP/clt-extract" ;;
+            *) echo "::error::unsupported CLT archive type: $zip"; exit 1 ;;
+          esac
+          src="$(find "$RUNNER_TEMP/clt-extract" -maxdepth 3 -type d -name 'command-line-tools' | head -n1)"
+          [ -n "$src" ] || src="$RUNNER_TEMP/clt-extract"
+          mv "$src" "$root"
+
+          test -d "$root/sdk/default/openharmony" || { echo "::error::CLT does not contain sdk/default/openharmony"; exit 1; }
+          test -x "$root/tool/node/bin/node" || { echo "::error::CLT does not contain tool/node/bin/node"; exit 1; }
+          test -f "$root/hvigor/bin/hvigorw.js" || { echo "::error::CLT does not contain hvigor/bin/hvigorw.js"; exit 1; }
+          test -f "$root/ohpm/bin/pm-cli.js" || { echo "::error::CLT does not contain ohpm/bin/pm-cli.js"; exit 1; }
+          # Some zip tools drop the executable bit; devecocli spawns these directly.
+          chmod +x "$root/bin/"* 2>/dev/null || true
+          chmod +x "$root/tool/node/bin/node" 2>/dev/null || true
+          chmod +x "$root/hvigor/bin/"* 2>/dev/null || true
+          # devecocli's CLT detection requires <root>/version.txt.
+          if [ ! -f "$root/version.txt" ]; then
+            printf '%s\n' "$CLT_VERSION" > "$root/version.txt"
+          fi
+          echo "CLT ready at $root"
+
+      - name: Install devecocli
+        shell: bash
+        run: npm install -g @deveco/deveco-cli@${{ env.DEVECO_CLI_VERSION }}
+
+      - name: Configure devecocli / verify toolchain
         shell: bash
         run: |
           set -euo pipefail
-          # 直接解到最终位置，且必须带 apiVersion 这一层。
-          # hvigor 的 getLocation() 是：
-          #   有合法 apiVersion 时 -> <sdkRoot>/<apiVersion>/<component>
-          #   否则                -> <sdkRoot>/<component>
-          # 我们的组件都带 apiVersion=23，所以必须放在 openharmony/23/{ets,js,native,toolchains}。
-          # symlink 也不要：路径是 path.resolve 出来的词法比较，软链容易对不上。
-          ROOT="$RUNNER_TEMP/deveco-sdk/default/openharmony/$SDK_API_NUM"
-          URL="https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz"
-          mkdir -p "$ROOT"
-          echo "downloading $URL"
-          curl -fL --retry 3 --connect-timeout 30 -o "$RUNNER_TEMP/sdk.tar.gz" "$URL"
-          tar -xzf "$RUNNER_TEMP/sdk.tar.gz" -C "$RUNNER_TEMP" --wildcards \
-            'linux/ets-*.zip' 'linux/js-*.zip' 'linux/native-*.zip' 'linux/toolchains-*.zip'
-          rm -f "$RUNNER_TEMP/sdk.tar.gz"
-          for z in "$RUNNER_TEMP"/linux/*.zip; do
-            echo "--- $(basename "$z")"
-            unzip -q "$z" -d "$ROOT"
-          done
-          rm -rf "$RUNNER_TEMP/linux"
-          ls -la "$ROOT"
-          test -d "$ROOT/ets" && test -d "$ROOT/toolchains"
+          echo "DEVECO_CLI_CLT_PATH=$RUNNER_TEMP/command-line-tools" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/command-line-tools/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/command-line-tools/tool/node/bin" >> "$GITHUB_PATH"
+          devecocli --version
+          "$RUNNER_TEMP/command-line-tools/tool/node/bin/node" --version
+          test -f "$RUNNER_TEMP/command-line-tools/sdk/default/openharmony/ets/api/@ohos.net.vpnExtension.d.ts"
+          echo "HarmonyOS SDK: $(cat "$RUNNER_TEMP/command-line-tools/sdk/default/sdk-pkg.json" 2>/dev/null | head -c 300)"
 
-      - name: Stage SDK in the DevEco layout
+      # libxray.a is gitignored, so a clean checkout needs it from a release
+      # asset or a local build. Cache it to make repeated HAP builds fast.
+      - name: Restore libxray
+        id: libxray-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            entry/src/main/cpp/thirdparty/libxray/libs
+            entry/src/main/cpp/thirdparty/libxray/include
+          key: libxray-ohos-arm64-${{ hashFiles('native/libxray/go.mod', 'native/libxray/go.sum', 'native/libxray/*.go', 'native/build_libxray.sh', 'native/tools/**', 'native/libxray/xray-core/proxy/tun/**', 'native/libxray/gvisor/pkg/tcpip/link/fdbased/endpoint.go') }}
+
+      - name: Setup host Go (for ccwrap when building libxray)
+        if: steps.libxray-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Fetch or build libxray
+        if: steps.libxray-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIBXRAY_TAG: ${{ inputs.libxray_tag || '' }}
+        run: |
+          set -euo pipefail
+          dst="entry/src/main/cpp/thirdparty/libxray"
+          mkdir -p "$dst/libs/arm64-v8a" "$dst/include" "$RUNNER_TEMP/libxray"
+
+          args=()
+          if [ -n "${LIBXRAY_TAG:-}" ]; then
+            args+=("$LIBXRAY_TAG")
+          fi
+          if gh release download "${args[@]}" --pattern libxray.a --pattern libxray.h --dir "$RUNNER_TEMP/libxray" --clobber 2>/dev/null; then
+            echo "using libxray from release ${LIBXRAY_TAG:-<latest>}"
+            cp "$RUNNER_TEMP/libxray/libxray.a" "$dst/libs/arm64-v8a/libxray.a"
+            cp "$RUNNER_TEMP/libxray/libxray.h" "$dst/include/libxray.h"
+            exit 0
+          fi
+
+          echo "release asset unavailable; building libxray.a from source"
+          osgo="$RUNNER_TEMP/ohos-go"
+          asset="go${OHOS_GO_VERSION#v}-linux-amd64.tar.gz"
+          url="https://github.com/sysit/ohos-go/releases/download/${OHOS_GO_VERSION}/${asset}"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 -o "$RUNNER_TEMP/ohos-go.tar.gz" "$url"
+          rm -rf "$osgo"
+          mkdir -p "$osgo"
+          tar -xzf "$RUNNER_TEMP/ohos-go.tar.gz" -C "$osgo" --strip-components=1
+          OHOS_GO="$osgo" OHOS_SDK="$RUNNER_TEMP/command-line-tools/sdk/default/openharmony" bash native/build_libxray.sh
+          test -f "$dst/libs/arm64-v8a/libxray.a"
+          test -f "$dst/include/libxray.h"
+
+      - name: Save libxray
+        if: steps.libxray-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            entry/src/main/cpp/thirdparty/libxray/libs
+            entry/src/main/cpp/thirdparty/libxray/include
+          key: ${{ steps.libxray-cache.outputs.cache-primary-key }}
+
+      - name: Install ohpm dependencies
+        shell: bash
+        run: ohpm install --all
+
+      - name: Build unsigned HAP
+        shell: bash
+        run: devecocli build --product default --build-mode release
+
+      - name: Stage unsigned HAP
+        id: stage
         shell: bash
         run: |
           set -euo pipefail
-          DEVECO="$RUNNER_TEMP/deveco-sdk"
-          OH="$DEVECO/default/openharmony"
+          version="$(node -e "const fs=require('fs');const s=fs.readFileSync('AppScope/app.json5','utf8');const m=s.match(/\x22versionName\x22\s*:\s*\x22([^\x22]+)\x22/);if(!m)process.exit(1);console.log(m[1])")"
+          hap="$(find entry/build -type f -name '*-unsigned.hap' | head -n1)"
+          [ -n "$hap" ] || { echo "::error::no unsigned HAP produced"; find entry/build -type f -name '*.hap' || true; exit 1; }
+          mkdir -p dist
+          out="dist/v2rayH-${version}-unsigned.hap"
+          cp "$hap" "$out"
+          sha="$(sha256sum "$out" | awk '{print $1}')"
+          printf '%s  %s\n' "$sha" "$(basename "$out")" > "dist/v2rayH-${version}.sha256"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "hap=$out" >> "$GITHUB_OUTPUT"
+          echo "unsigned HAP: $out ($(du -h "$out" | cut -f1))"
 
-          # 「新的 SDK 管理模式」的标志文件：DevEco 自带的 SDK 在 default/ 下有它，
-          # 没有它 hvigor 会报 00308018 The SDK management mode has changed。
-          # 字段值取自各组件 oh-uni-package.json（apiVersion 23 / version 6.1.0.31），
-          # OH 组件里没有 platformVersion 字段，这里按 version 推断。
-          cat > "$DEVECO/default/sdk-pkg.json" <<'JSON'
-          {
-            "meta": { "version": "1.0.0" },
-            "data": {
-              "apiVersion": "23",
-              "displayName": "OpenHarmony 6.1.0",
-              "path": "OpenHarmony-6.1.0.31",
-              "platformVersion": "6.1.0",
-              "releaseType": "Release",
-              "version": "6.1.0.31",
-              "stage": "Release"
-            }
-          }
-          JSON
-          echo "DEVECO_SDK_HOME=$DEVECO" >> "$GITHUB_ENV"
-          ls -la "$DEVECO/default" "$OH"
-          echo "=== component locations (expect $OH/$SDK_API_NUM/<name>) ==="
-          for c in ets js native toolchains; do
-            echo "$c -> $OH/$SDK_API_NUM/$c/oh-uni-package.json  $( [ -f "$OH/$SDK_API_NUM/$c/oh-uni-package.json" ] && echo present || echo MISSING )"
-          done
-
-      - name: Install hvigor into the project
-        shell: bash
-        run: |
-          set -euo pipefail
-          # hvigorfile.ts 是 `import { appTasks } from '@ohos/hvigor-ohos-plugin'`，
-          # node 从该文件所在目录往上找 node_modules，所以必须装进工程目录
-          # （正常的 DevEco 工程也是这样，由 hvigorw 装出来）。
-          cd "$GITHUB_WORKSPACE"
-          [ -f package.json ] || echo '{"name":"v2rayH-build","private":true}' > package.json
-          npm config set registry https://repo.harmonyos.com/npm/
-          npm install --no-audit --no-fund @ohos/hvigor@6.26.8 @ohos/hvigor-ohos-plugin@6.26.8
-          echo "HVIGOR_BIN=$GITHUB_WORKSPACE/node_modules/@ohos/hvigor/bin/hvigor.js" >> "$GITHUB_ENV"
-          node "$GITHUB_WORKSPACE/node_modules/@ohos/hvigor/bin/hvigor.js" --version || true
-
-      - name: Apply OpenHarmony overrides
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "--- before ---"
-          cat build-profile.json5
-          python3 - <<'PY'
-          import json, os, re
-          p = 'build-profile.json5'
-          src = open(p, encoding='utf-8').read()
-          # build-profile 是 json5（带注释/尾逗号），这里用正则做定点替换就够了
-          # OpenHarmony 模式要求 product 里有 compileSdkVersion（HarmonyOS 模式没有这个字段）
-          src = src.replace('"runtimeOS": "HarmonyOS"',
-                            '"runtimeOS": "OpenHarmony",\n        "compileSdkVersion": "%s"' % os.environ['SDK_API'])
-          src = src.replace('"compatibleSdkVersion": "6.1.1(24)"',
-                            '"compatibleSdkVersion": "%s"' % os.environ['SDK_API'])
-          src = src.replace('"targetSdkVersion": "26.0.0"',
-                            '"targetSdkVersion": "%s"' % os.environ['SDK_API'])
-          open(p, 'w', encoding='utf-8').write(src)
-          print('patched')
-          PY
-          echo "--- after ---"
-          cat build-profile.json5
-          # hvigor 也从 local.properties 找 SDK
-          printf 'sdk.dir=%s/default/openharmony\n' "$RUNNER_TEMP/deveco-sdk" > local.properties
-          cat local.properties
-
-      - name: hvigor doctor / env
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --version
-          echo "DEVECO_SDK_HOME=$DEVECO_SDK_HOME"
-          ls "$DEVECO_SDK_HOME/default/openharmony/$SDK_API_NUM/ets/api/@ohos.net.vpnExtension.d.ts"
-          echo "=== project files ==="
-          ls -la
-          echo "=== entry cpp thirdparty (needs libxray.a from CI) ==="
-          ls -la entry/src/main/cpp/thirdparty/libxray/libs/arm64-v8a/ 2>/dev/null || echo "libxray.a MISSING"
-
-      - name: assembleHap
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$GITHUB_WORKSPACE"
-          node "$HVIGOR_BIN" --no-daemon assembleHap 2>&1 | tee "$RUNNER_TEMP/hvigor.log" | tail -150
-          echo "=== exit: ${PIPESTATUS[0]} ==="
-          echo "=== outputs ==="
-          find . -name '*.hap' -not -path './.git/*' 2>/dev/null | head -20 || true
-
-      - name: Upload hvigor log + any HAP
-        if: always()
+      - name: Upload unsigned HAP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hap-build-log
-          path: |
-            ${{ runner.temp }}/hvigor.log
-            entry/build/default/outputs/**/*.hap
-          if-no-files-found: warn
-          retention-days: 14
+          name: v2rayH-${{ steps.stage.outputs.version }}-unsigned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to GitHub Release
+        if: github.event_name == 'release' || inputs.publish == true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.stage.outputs.version }}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            tag="v${version}"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --title "v2rayH ${version}" --generate-notes
+          fi
+          echo "published ${tag}"

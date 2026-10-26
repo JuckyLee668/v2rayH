@@ -16,6 +16,7 @@
     "plugin:@typescript-eslint/recommended"
   ],
   "rules": {
+    "@compatibility/api-compatibility-check": "warn",
     "@security/no-unsafe-aes": "error",
     "@security/no-unsafe-hash": "error",
     "@security/no-unsafe-mac": "warn",

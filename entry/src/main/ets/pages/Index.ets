@@ -1,4 +1,3 @@
-import { uiMaterial } from '@kit.ArkUI';
 import { AppTheme } from '../common/AppTheme';
 import { AppState } from '../common/AppState';
 import { HomeTab } from '../view/HomeTab';
@@ -80,14 +79,9 @@ struct Index {
     .barOverlap(true)
     .scrollable(false)
     .animationDuration(0)
-    .barFloatingStyle({
-      barBottomMargin: px2vp(this.bottomRectPx) + 8,
-      systemMaterial: new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.REGULAR,
-        interactive: true,
-        applyShadow: true
-      })
-    })
+    .barBackgroundColor(AppTheme.CARD_BG)
+    .barBackgroundBlurStyle(BlurStyle.Thick)
+    .padding({ bottom: px2vp(this.bottomRectPx) })
     .onTabBarClick((index: number) => {
       this.onTabBarTap(index);
     })

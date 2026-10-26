@@ -44,6 +44,9 @@ jobs:
     name: libxray.a (openharmony/arm64)
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    # The `clt` release only hosts Command Line Tools; don't build the kernel
+    # for it (build-hap.yml handles its own libxray fallback).
+    if: github.event_name != 'release' || github.event.release.tag_name != 'clt'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

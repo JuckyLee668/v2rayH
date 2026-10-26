@@ -36,10 +36,11 @@ export struct HomeTab {
 
       Column({ space: 4 }) {
         Row({ space: 6 }) {
-          Circle()
+          Row()
             .width(8)
             .height(8)
-            .fill(this.app.connected ? AppTheme.OK : AppTheme.TEXT_WEAK)
+            .borderRadius(4)
+            .backgroundColor(this.app.connected ? AppTheme.OK : AppTheme.TEXT_WEAK)
           Text(this.app.connected ? '已连接' : '未连接')
             .fontSize(12)
             .fontColor(this.app.connected ? AppTheme.OK : AppTheme.TEXT_SUB)

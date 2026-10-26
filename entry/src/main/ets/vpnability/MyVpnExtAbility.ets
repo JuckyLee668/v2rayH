@@ -112,17 +112,24 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
       this.log('vpn create success, fd=' + fd.toString());
       let conn = this.vpnConnection;
       if (conn) {
-        conn.protectProcessNet().then(() => {
-          let code: number = testNapi.startVpnTun(fd, xrayConfig, this.context.filesDir + '/geo');
-          this.log('startVpnTun code=' + code.toString() + ' lastErr=' + testNapi.getLastError());
-        }).catch((err: Error) => {
-          this.log('protectProcessNet failed: ' + JSON.stringify(err));
-          let code: number = testNapi.startVpnTun(fd, xrayConfig, this.context.filesDir + '/geo');
-          this.log('startVpnTun(after protect fail) code=' + code.toString());
-        });
+        if (conn.protectProcessNet !== undefined) {
+          conn.protectProcessNet().then(() => {
+            this.startKernel(fd, xrayConfig);
+          }).catch((err: Error) => {
+            this.log('protectProcessNet failed: ' + JSON.stringify(err));
+            this.startKernel(fd, xrayConfig);
+          });
+        } else {
+          this.startKernel(fd, xrayConfig);
+        }
       }
     }).catch((err: Error) => {
       this.log('vpn create failed: ' + JSON.stringify(err));
     });
+  }
+
+  private startKernel(fd: number, xrayConfig: string): void {
+    let code: number = testNapi.startVpnTun(fd, xrayConfig, this.context.filesDir + '/geo');
+    this.log('startVpnTun code=' + code.toString() + ' lastErr=' + testNapi.getLastError());
   }
 }
