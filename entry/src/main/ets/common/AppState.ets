@@ -67,7 +67,7 @@ export class AppState {
   downloadNodeKey: string = '';
   downloadError: string = '';
   coreVersion: string = '';
-  appVersion: string = '0.2.1';
+  appVersion: string = '0.2.2';
   exitIp: string = '';
   ipBusy: boolean = false;
   ipError: string = '';
