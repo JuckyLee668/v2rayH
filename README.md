@@ -21,6 +21,41 @@
 - 底部页签沉浸光感材质（HDS 组件，随设备算力自适应）
 - 深色模式与主题色跟随系统
 
+## 安装
+
+Releases 附带的是**未签名** HAP（原因见下文「签名」一节），任选以下一种方式安装。
+系统要求 HarmonyOS 6.1 及以上。
+
+### 方法一：小白调试助手（无需电脑）
+
+1. 手机浏览器打开 [Releases](https://github.com/JuckyLee668/v2rayH/releases) 页面，
+   下载最新的 `v2rayH-<版本>-unsigned.hap`（可一并下载 `.sha256` 用于校验）。
+2. 在华为应用市场搜索「小白调试助手」安装（或从其官方发布渠道获取）。
+3. 打开小白调试助手，选择安装应用，选中下载好的 `.hap` 文件，按提示完成授权 ——
+   助手会自动对安装包做本地签名并完成安装。
+4. 桌面出现 v2rayH 图标，首次启动按提示授予 VPN 权限即可。
+
+> 可选完整性校验（与 `.sha256` 文件内容比对）：
+> Windows：`certutil -hashfile v2rayH-<版本>-unsigned.hap SHA256`；
+> Linux：`sha256sum`；macOS：`shasum -a 256`。
+
+### 方法二：DevEco Studio（需要电脑）
+
+1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)
+   并登录华为账号。
+2. 克隆本仓库，并从任一 [Release](https://github.com/JuckyLee668/v2rayH/releases)
+   附件下载 `libxray.a` 与 `libxray.h`，放到：
+   - `entry/src/main/cpp/thirdparty/libxray/libs/arm64-v8a/libxray.a`
+   - `entry/src/main/cpp/thirdparty/libxray/include/libxray.h`
+
+   `libxray.a` 不入 git，缺少它项目无法构建。
+3. 用 DevEco Studio 打开项目：File → Project Structure → Signing Configs，
+   勾选 Automatically generate signature 自动生成调试签名。
+   该配置写入本地 `build-profile.json5`，别把它提交上去（见下文「签名」）。
+4. 手机开启「开发者选项 → USB 调试」并连接电脑，在设备列表选中后点 Run ▶，
+   构建签名并安装。
+5. 首次启动按提示授予 VPN 权限。
+
 ## 目录结构
 
 | 路径 | 说明 |
