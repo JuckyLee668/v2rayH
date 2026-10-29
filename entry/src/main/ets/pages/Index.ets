@@ -1,3 +1,4 @@
+import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { AppTheme } from '../common/AppTheme';
 import { AppState } from '../common/AppState';
 import { HomeTab } from '../view/HomeTab';
@@ -14,7 +15,7 @@ struct Index {
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @StorageProp('systemDarkFlag') @Watch('onSystemDark') systemDarkFlag: boolean = false;
   @StorageLink('themeRev') themeRev: number = 0;
-  private tabsController: TabsController = new TabsController();
+  private tabsController: HdsTabsController = new HdsTabsController();
 
   onSystemDark(): void {
     this.app.setSystemDark(this.systemDarkFlag);
@@ -55,38 +56,47 @@ struct Index {
   }
 
   build() {
-    Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
-      TabContent() {
-        HomeTab({ app: this.app })
-      }
-      .tabBar(this.tabItem('主页', $r('sys.symbol.house'), 0))
+    Column() {
+      HdsTabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
+        TabContent() {
+          HomeTab({ app: this.app })
+        }
+        .tabBar(this.tabItem('主页', $r('sys.symbol.house'), 0))
 
-      TabContent() {
-        ConfigTab({ app: this.app, resetTick: this.configReset })
-      }
-      .tabBar(this.tabItem('配置', $r('sys.symbol.slider_horizontal_2'), 1))
+        TabContent() {
+          ConfigTab({ app: this.app, resetTick: this.configReset })
+        }
+        .tabBar(this.tabItem('配置', $r('sys.symbol.slider_horizontal_2'), 1))
 
-      TabContent() {
-        SettingsTab({ app: this.app, resetTick: this.settingsReset })
+        TabContent() {
+          SettingsTab({ app: this.app, resetTick: this.settingsReset })
+        }
+        .tabBar(this.tabItem('设置', $r('sys.symbol.gearshape'), 2))
       }
-      .tabBar(this.tabItem('设置', $r('sys.symbol.gearshape'), 2))
+      .width('100%')
+      .layoutWeight(1)
+      .backgroundColor(AppTheme.PAGE_BG)
+      .barMode(BarMode.Fixed)
+      .barHeight(56)
+      .barOverlap(true)
+      .vertical(false)
+      .scrollable(false)
+      .animationDuration(0)
+      .barFloatingStyle({
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      })
+      .padding({ bottom: px2vp(this.bottomRectPx) })
+      .onTabBarClick((index: number) => {
+        this.onTabBarTap(index);
+      })
+      .onChange((index: number) => {
+        this.currentIndex = index;
+      })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(AppTheme.PAGE_BG)
-    .barMode(BarMode.Fixed)
-    .barHeight(56)
-    .barOverlap(true)
-    .scrollable(false)
-    .animationDuration(0)
-    .barBackgroundColor(AppTheme.CARD_BG)
-    .barBackgroundBlurStyle(BlurStyle.Thick)
-    .padding({ bottom: px2vp(this.bottomRectPx) })
-    .onTabBarClick((index: number) => {
-      this.onTabBarTap(index);
-    })
-    .onChange((index: number) => {
-      this.currentIndex = index;
-    })
   }
 }

@@ -366,12 +366,15 @@ export class AppState {
     return p.toString() + 'ms';
   }
 
+  private serverKeyOf(s: ServerConfig): string {
+    return s.name + '|' + s.address + ':' + s.port.toString();
+  }
+
   private nodeKey(idx: number): string {
     if (idx < 0 || idx >= this.servers.length) {
       return '';
     }
-    let s: ServerConfig = this.servers[idx];
-    return s.name + '|' + s.address + ':' + s.port.toString();
+    return this.serverKeyOf(this.servers[idx]);
   }
 
   downloadMbps(): number {
@@ -502,39 +505,87 @@ export class AppState {
     if (this.groups.length === 0) {
       this.addGroup('默认订阅', url);
     }
+    this.updateGroupSubscription(this.activeGroup);
+  }
+
+  async updateGroupSubscription(index: number): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+    if (index < 0 || index >= this.groups.length) {
+      return;
+    }
+    let name = this.groups[index].name;
+    let url = this.groups[index].url.trim();
+    if (url.length === 0) {
+      this.status = '「' + name + '」未设置订阅链接';
+      return;
+    }
     this.busy = true;
-    this.status = '正在拉取订阅...';
-    let target = this.activeGroup;
-    SubscriptionFetcher.fetchText(url).then((content: string) => {
-      let list = parseSubscription(content);
-      if (list.length === 0) {
-        this.status = '拉取失败: ' + content.length.toString() + 'B, err=' + SubscriptionFetcher.lastError;
-        this.busy = false;
-        return;
+    this.status = '正在更新订阅: ' + name + '...';
+    let content = await SubscriptionFetcher.fetchText(url);
+    let list = parseSubscription(content);
+    if (list.length === 0) {
+      let reason = SubscriptionFetcher.lastError.length > 0 ? SubscriptionFetcher.lastError : '内容无法解析';
+      this.status = '「' + name + '」更新失败: ' + reason;
+      this.busy = false;
+      return;
+    }
+    let prevKey = index === this.activeGroup ? this.nodeKey(this.selected) : '';
+    let next: SubGroup[] = [];
+    for (let i = 0; i < this.groups.length; i++) {
+      let g = this.groups[i];
+      if (i === index) {
+        let copy = new SubGroup(g.id, g.name, url);
+        copy.nodes = list;
+        copy.updatedAt = Date.now();
+        next.push(copy);
+      } else {
+        next.push(g);
       }
-      let next: SubGroup[] = [];
-      for (let i = 0; i < this.groups.length; i++) {
-        let g = this.groups[i];
-        if (i === target) {
-          let copy = new SubGroup(g.id, g.name, url);
-          copy.nodes = list;
-          copy.updatedAt = Date.now();
-          next.push(copy);
-        } else {
-          next.push(g);
+    }
+    this.groups = next;
+    this.saveGroups();
+    if (index === this.activeGroup) {
+      this.subUrl = url;
+      this.store.saveSubscriptionUrl(url);
+      this.servers = list;
+      let keep = 0;
+      if (prevKey.length > 0) {
+        for (let i = 0; i < list.length; i++) {
+          if (this.serverKeyOf(list[i]) === prevKey) {
+            keep = i;
+            break;
+          }
         }
       }
-      this.groups = next;
-      this.servers = list;
-      this.selected = 0;
+      this.selected = keep;
+      this.store.saveSelected(keep);
       this.pings = [];
-      this.subUrl = url;
-      this.saveGroups();
-      this.store.saveSubscriptionUrl(url);
-      this.store.saveSelected(0);
-      this.status = '订阅更新成功，共 ' + list.length.toString() + ' 个节点';
-      this.busy = false;
-    });
+      if (this.connected) {
+        this.busy = false;
+        await this.switchNode();
+        return;
+      }
+    }
+    this.status = '「' + name + '」已更新，共 ' + list.length.toString() + ' 个节点';
+    this.busy = false;
+  }
+
+  async updateAllGroups(): Promise<void> {
+    if (this.busy) {
+      return;
+    }
+    let updated = 0;
+    for (let i = 0; i < this.groups.length; i++) {
+      if (this.groups[i].url.trim().length > 0) {
+        updated++;
+        await this.updateGroupSubscription(i);
+      }
+    }
+    if (updated === 0) {
+      this.status = '没有可更新的订阅分组';
+    }
   }
 
   async testAll(): Promise<void> {

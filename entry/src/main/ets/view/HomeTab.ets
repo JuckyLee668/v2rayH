@@ -101,6 +101,16 @@ export struct HomeTab {
       Text(this.app.servers.length.toString() + ' 个节点')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
+
+      if (this.app.subUrl.length > 0) {
+        SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
+          .fontSize(17)
+          .fontColor([this.app.busy ? AppTheme.TEXT_WEAK : AppTheme.PRIMARY])
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.app.updateGroupSubscription(this.app.activeGroup);
+          })
+      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)

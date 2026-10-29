@@ -1,4 +1,5 @@
-import { pasteboard } from '@kit.BasicServicesKit';
+import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { scanBarcode } from '@kit.ScanKit';
 import { AppState } from '../common/AppState';
 import { AppTheme } from '../common/AppTheme';
@@ -208,11 +209,43 @@ export struct ConfigTab {
     .margin({ top: 12 })
   }
 
+  private async ensureReadPasteboard(): Promise<boolean> {
+    let ctx = this.getUIContext().getHostContext();
+    if (ctx === undefined) {
+      this.app.status = '上下文未就绪';
+      return false;
+    }
+    try {
+      let atManager = abilityAccessCtrl.createAtManager();
+      let perms: Array<Permissions> = ['ohos.permission.READ_PASTEBOARD'];
+      let res = await atManager.requestPermissionsFromUser(ctx, perms);
+      return res.authResults.length > 0 && res.authResults[0] === 0;
+    } catch (e) {
+      let err = e as BusinessError;
+      this.app.status = '申请剪贴板权限失败: ' + err.code.toString();
+      return false;
+    }
+  }
+
   private async importFromClipboard(): Promise<void> {
+    let granted = await this.ensureReadPasteboard();
+    if (!granted) {
+      this.app.status = '未授予剪贴板读取权限，无法导入';
+      return;
+    }
     try {
       let board = pasteboard.getSystemPasteboard();
+      let has = await board.hasData();
+      if (!has) {
+        this.app.status = '剪贴板为空';
+        return;
+      }
       let data = await board.getData();
       let text = data.getPrimaryText();
+      if (text === undefined || text.length === 0) {
+        this.app.status = '剪贴板里没有文本内容';
+        return;
+      }
       let list = parseSubscription(text);
       if (list.length === 0) {
         this.app.status = '剪贴板里没有可识别的节点链接';
@@ -220,7 +253,8 @@ export struct ConfigTab {
       }
       this.app.addServers(list, '本机节点');
     } catch (e) {
-        this.app.status = '读取剪贴板失败';
+      let err = e as BusinessError;
+      this.app.status = '读取剪贴板失败: ' + err.code.toString() + ' ' + err.message;
     }
   }
 
@@ -306,13 +340,25 @@ export struct ConfigTab {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      SymbolGlyph($r('sys.symbol.trash'))
-        .fontSize(18)
-        .fontColor([AppTheme.DANGER])
-        .padding(8)
-        .onClick(() => {
-          this.confirmRemoveGroup(idx);
-        })
+      Row({ space: 2 }) {
+        if (g.url.length > 0) {
+          SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
+            .fontSize(18)
+            .fontColor([this.app.activeGroup === idx ? AppTheme.PRIMARY : AppTheme.TEXT_SUB])
+            .padding(8)
+            .onClick(() => {
+              this.app.updateGroupSubscription(idx);
+            })
+        }
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([AppTheme.DANGER])
+          .padding(8)
+          .onClick(() => {
+            this.confirmRemoveGroup(idx);
+          })
+      }
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
@@ -340,6 +386,26 @@ export struct ConfigTab {
   @Builder
   groupsPage() {
     Column() {
+      Row() {
+        Text('共 ' + this.app.groups.length.toString() + ' 个分组')
+          .fontSize(12)
+          .fontColor(AppTheme.TEXT_WEAK)
+        Blank()
+        Button(this.app.busy ? '更新中...' : '全部更新')
+          .fontSize(12)
+          .height(30)
+          .fontColor(AppTheme.PRIMARY)
+          .backgroundColor(AppTheme.PRIMARY_SOFT)
+          .borderRadius(15)
+          .enabled(!this.app.busy)
+          .onClick(() => {
+            this.app.updateAllGroups();
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 10, bottom: 2 })
+
       List({ space: 8 }) {
         ForEach(this.app.groups, (g: SubGroup, idx: number) => {
           ListItem() {
@@ -818,10 +884,24 @@ export struct ConfigTab {
   }
 
   private async pasteGeoLinks(): Promise<void> {
+    let granted = await this.ensureReadPasteboard();
+    if (!granted) {
+      return;
+    }
     try {
       let board = pasteboard.getSystemPasteboard();
+      let has = await board.hasData();
+      if (!has) {
+        this.app.status = '剪贴板为空';
+        return;
+      }
       let data = await board.getData();
-      let text = data.getPrimaryText().trim();
+      let text = data.getPrimaryText();
+      if (text === undefined) {
+        this.app.status = '剪贴板为空';
+        return;
+      }
+      text = text.trim();
       if (text.length === 0) {
         this.app.status = '剪贴板为空';
         return;
@@ -832,7 +912,8 @@ export struct ConfigTab {
       this.app.setGeoUrls(site, ip);
       this.app.status = '已从剪贴板导入链接';
     } catch (e) {
-      this.app.status = '读取剪贴板失败';
+      let err = e as BusinessError;
+      this.app.status = '读取剪贴板失败: ' + err.code.toString();
     }
   }
 
