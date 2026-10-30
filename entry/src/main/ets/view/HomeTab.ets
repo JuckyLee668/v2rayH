@@ -8,6 +8,24 @@ export struct HomeTab {
   @StorageProp('themeRev') themeRev: number = 0;
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
+  @State statsTick: number = 0;
+  private timerId: number = -1;
+
+  aboutToAppear(): void {
+    this.timerId = setInterval(() => {
+      this.statsTick = this.statsTick + 1;
+      if (this.app.connected) {
+        this.app.refreshTrafficStats();
+      }
+    }, 2000);
+  }
+
+  aboutToDisappear(): void {
+    if (this.timerId >= 0) {
+      clearInterval(this.timerId);
+      this.timerId = -1;
+    }
+  }
 
   private ipLabel(): string {
     if (!this.app.connected && !this.app.ipBusy) {
@@ -73,6 +91,40 @@ export struct HomeTab {
   }
 
   @Builder
+  trafficBar() {
+    Row({ space: 12 }) {
+      Row({ space: 6 }) {
+        Row()
+          .width(7)
+          .height(7)
+          .borderRadius(4)
+          .backgroundColor(AppTheme.OK)
+        Text(this.statsTick >= 0 ? this.app.connectedDurationText() : '')
+          .fontSize(12)
+          .fontColor(AppTheme.OK)
+          .fontWeight(FontWeight.Medium)
+      }
+      .alignItems(VerticalAlign.Center)
+
+      Blank()
+
+      Text('↑ ' + this.app.trafficText(this.app.sessionTx))
+        .fontSize(12)
+        .fontColor(AppTheme.TEXT_SUB)
+
+      Text('↓ ' + this.app.trafficText(this.app.sessionRx))
+        .fontSize(12)
+        .fontColor(AppTheme.TEXT_SUB)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+    .backgroundColor(AppTheme.CARD_BG)
+    .borderRadius(12)
+    .margin({ top: 12 })
+  }
+
+  @Builder
   groupSelector() {
     Row() {
       if (this.app.groups.length > 0) {
@@ -119,10 +171,14 @@ export struct HomeTab {
 
   private testSubtitle(): string {
     if (this.app.testing) {
-      return '正在经代理实测延迟...';
+      return '正在 TCP Ping 测速...';
     }
     if (this.app.downloadTesting) {
       return '正在下载 20MB 测试文件...';
+    }
+    let n: number = this.app.multiCount();
+    if (n > 0) {
+      return '已多选 ' + n.toString() + ' 个节点，点「延迟」只测选中';
     }
     let srv: ServerConfig | undefined = this.app.currentNode();
     if (srv !== undefined) {
@@ -149,7 +205,20 @@ export struct HomeTab {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Button(this.app.testing ? '测速中' : '延迟')
+        if (this.app.multiCount() > 0 && !this.app.testing) {
+          Button('取消多选')
+            .type(ButtonType.Capsule)
+            .height(30)
+            .fontSize(12)
+            .fontColor(AppTheme.TEXT_SUB)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .padding({ left: 10, right: 10 })
+            .onClick(() => {
+              this.app.clearMulti();
+            })
+        }
+
+        Button(this.app.testing ? '测速中' : (this.app.multiCount() > 0 ? '测选中' : '延迟'))
           .type(ButtonType.Capsule)
           .height(30)
           .fontSize(12)
@@ -196,6 +265,26 @@ export struct HomeTab {
   @Builder
   nodeRow(item: ServerConfig, idx: number) {
     Row() {
+      if (this.app.isMulti(idx)) {
+        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+          .fontSize(21)
+          .fontColor([AppTheme.PRIMARY])
+          .margin({ right: 12 })
+          .onClick(() => {
+            this.app.toggleMulti(idx);
+          })
+      } else {
+        Row()
+          .width(20)
+          .height(20)
+          .borderRadius(10)
+          .border({ width: 1.5, color: AppTheme.TEXT_WEAK })
+          .margin({ right: 12 })
+          .onClick(() => {
+            this.app.toggleMulti(idx);
+          })
+      }
+
       Column() {
         Text(item.name)
           .fontSize(15)
@@ -253,61 +342,71 @@ export struct HomeTab {
 
   build() {
     Column() {
-      this.header()
+      ForEach([this.themeRev], (rev: number) => {
+        Column() {
+          this.header()
 
-      this.groupSelector()
+          if (this.app.connected) {
+            this.trafficBar()
+          }
 
-      if (this.app.servers.length > 0) {
-        this.testPanel()
-      }
+          this.groupSelector()
 
-      if (this.app.servers.length === 0) {
-        this.emptyNodes()
-      } else {
-        List({ space: 8 }) {
-          ForEach(this.app.servers, (item: ServerConfig, idx: number) => {
-            ListItem() {
-              this.nodeRow(item, idx)
+          if (this.app.servers.length > 0) {
+            this.testPanel()
+          }
+
+          if (this.app.servers.length === 0) {
+            this.emptyNodes()
+          } else {
+            List({ space: 8 }) {
+              ForEach(this.app.servers, (item: ServerConfig, idx: number) => {
+                ListItem() {
+                  this.nodeRow(item, idx)
+                }
+                .backgroundColor(this.app.isMulti(idx) ? AppTheme.PRIMARY_SOFT : AppTheme.CARD_BG)
+                .borderRadius(14)
+                .onClick(() => {
+                  this.app.selectServer(idx);
+                })
+              }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|' + item.address)
             }
-            .backgroundColor(AppTheme.CARD_BG)
-            .borderRadius(14)
+            .width('100%')
+            .layoutWeight(1)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+          }
+
+          if (this.app.status.length > 0) {
+            Text(this.app.status)
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_SUB)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .maxLines(2)
+              .margin({ top: 8, bottom: 8 })
+          }
+
+          Button(this.app.connected ? '断开连接' : '连接')
+            .width('100%')
+            .height(52)
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .backgroundColor(this.app.connected ? AppTheme.DANGER : AppTheme.PRIMARY)
+            .borderRadius(26)
+            .margin({ top: 12 })
             .onClick(() => {
-              this.app.selectServer(idx);
+              if (this.app.connected) {
+                this.app.disconnect();
+              } else {
+                this.app.connect();
+              }
             })
-          }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|' + item.address)
         }
         .width('100%')
         .layoutWeight(1)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-      }
-
-      if (this.app.status.length > 0) {
-        Text(this.app.status)
-          .fontSize(11)
-          .fontColor(AppTheme.TEXT_SUB)
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .maxLines(2)
-          .margin({ top: 8, bottom: 8 })
-      }
-
-      Button(this.app.connected ? '断开连接' : '连接')
-        .width('100%')
-        .height(52)
-        .fontSize(17)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Color.White)
-        .backgroundColor(this.app.connected ? AppTheme.DANGER : AppTheme.PRIMARY)
-        .borderRadius(26)
-        .margin({ top: 12 })
-        .onClick(() => {
-          if (this.app.connected) {
-            this.app.disconnect();
-          } else {
-            this.app.connect();
-          }
-        })
+      }, (rev: number) => 'theme-' + rev.toString())
     }
     .width('100%')
     .height('100%')

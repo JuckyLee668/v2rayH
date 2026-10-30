@@ -178,6 +178,18 @@ export class AppStore {
     }
   }
 
+  appendText(name: string, text: string): boolean {
+    try {
+      let f = fs.openSync(this.dir + '/' + name, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.APPEND);
+      fs.writeSync(f.fd, text);
+      fs.closeSync(f);
+      return true;
+    } catch (e) {
+      console.error('appendText failed: ' + name + ' ' + JSON.stringify(e));
+      return false;
+    }
+  }
+
   writeBytesTo(path: string, data: ArrayBuffer): boolean {
     try {
       let f = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);

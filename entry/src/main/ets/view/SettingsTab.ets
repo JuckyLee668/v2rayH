@@ -5,6 +5,8 @@ const SET_NAV: number = 0;
 const SET_BACKUP: number = 1;
 const SET_ABOUT: number = 2;
 const SET_APPEARANCE: number = 3;
+const SET_CONN: number = 4;
+const SET_LOGS: number = 5;
 
 @Component
 export struct SettingsTab {
@@ -14,6 +16,13 @@ export struct SettingsTab {
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @State sub: number = SET_NAV;
+  @State logKind: number = 0;
+  @State logContent: string[] = [];
+
+  private loadLog(): void {
+    let text = this.app.logText(this.logKind);
+    this.logContent = text.length > 0 ? text.split('\n') : [];
+  }
 
   onResetTick(): void {
     this.sub = SET_NAV;
@@ -28,6 +37,12 @@ export struct SettingsTab {
     }
     if (this.sub === SET_ABOUT) {
       return '关于';
+    }
+    if (this.sub === SET_CONN) {
+      return '连接';
+    }
+    if (this.sub === SET_LOGS) {
+      return '运行日志';
     }
     return '设置';
   }
@@ -110,6 +125,9 @@ export struct SettingsTab {
     .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
     .onClick(() => {
       this.sub = target;
+      if (target === SET_LOGS) {
+        this.loadLog();
+      }
     })
   }
 
@@ -117,7 +135,9 @@ export struct SettingsTab {
   navPage() {
     Column({ space: 12 }) {
       this.navRow($r('sys.symbol.paintbrush_pointed_filled_circle'), '外观', '深色模式与主题色 · ' + this.app.darkModeText(), SET_APPEARANCE)
+      this.navRow($r('sys.symbol.arrow_2_circlepath'), '连接', '启动自动连接 · 故障转移', SET_CONN)
       this.navRow($r('sys.symbol.doc'), '备份与还原', '导出 / 导入配置', SET_BACKUP)
+      this.navRow($r('sys.symbol.doc_plaintext'), '运行日志', '查看 VPN 与内核日志', SET_LOGS)
       this.navRow($r('sys.symbol.info_circle'), '关于', '版本与内核信息', SET_ABOUT)
     }
     .width('100%')
@@ -197,6 +217,12 @@ export struct SettingsTab {
     }
     if (this.sub === SET_ABOUT) {
       return '版本与内核信息';
+    }
+    if (this.sub === SET_CONN) {
+      return '启动自动连接与故障转移';
+    }
+    if (this.sub === SET_LOGS) {
+      return 'VPN 与内核运行日志';
     }
     return '备份数据与应用信息';
   }
@@ -358,20 +384,186 @@ export struct SettingsTab {
     .width('100%')
   }
 
+  @Builder
+  connPage() {
+    Column() {
+      Column() {
+        Row() {
+          Column() {
+            Text('启动时自动连接')
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT)
+            Text('打开应用后自动连接上次的节点')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_SUB)
+              .margin({ top: 2 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.app.autoConnect })
+            .onChange((v: boolean) => {
+              this.app.setAutoConnect(v);
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16, top: 13, bottom: 13 })
+
+        Divider()
+          .strokeWidth(1)
+          .color(AppTheme.DIVIDER)
+
+        Row() {
+          Column() {
+            Text('故障转移')
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT)
+            Text('节点不可用时自动切换到下一节点')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_SUB)
+              .margin({ top: 2 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.app.failover })
+            .onChange((v: boolean) => {
+              this.app.setFailover(v);
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16, top: 13, bottom: 13 })
+      }
+      .width('100%')
+      .backgroundColor(AppTheme.CARD_BG)
+      .borderRadius(AppTheme.CARD_RADIUS)
+      .margin({ top: 18 })
+      .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
+
+      Text('开启故障转移后，连接期间每 45 秒检测一次当前节点，连续 2 次不可达时自动切换到下一节点；切换后冷却 2 分钟再继续检测，所有节点均不可用时停止切换。')
+        .fontSize(11)
+        .fontColor(AppTheme.TEXT_WEAK)
+        .width('100%')
+        .margin({ top: 12, left: 4 })
+        .maxLines(5)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  logPage() {
+    Column() {
+      Row() {
+        SetChoiceChip({ label: 'VPN 日志', active: this.logKind === 0, onPick: () => {
+          this.logKind = 0;
+          this.loadLog();
+        } })
+        SetChoiceChip({ label: 'Xray 日志', active: this.logKind === 1, onPick: () => {
+          this.logKind = 1;
+          this.loadLog();
+        } })
+
+        Blank()
+
+        Text('刷新')
+          .fontSize(12)
+          .fontColor(AppTheme.PRIMARY)
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(100)
+          .onClick(() => {
+            this.loadLog();
+          })
+        Text('清空')
+          .fontSize(12)
+          .fontColor(AppTheme.DANGER)
+          .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(100)
+          .margin({ left: 8 })
+          .onClick(() => {
+            this.app.clearLog(this.logKind);
+            this.loadLog();
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 14 })
+
+      Text('共 ' + this.logContent.length.toString() + ' 行 · ' + this.app.logMetaText(this.logKind) + ' · 最新在前')
+        .fontSize(11)
+        .fontColor(AppTheme.TEXT_WEAK)
+        .width('100%')
+        .margin({ top: 10, left: 4 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.logContent.length === 0) {
+        Column() {
+          Text('暂无日志')
+            .fontSize(13)
+            .fontColor(AppTheme.TEXT_WEAK)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Scroll() {
+          Column() {
+            ForEach(this.logContent, (line: string, idx: number) => {
+              Text(line)
+                .fontSize(11)
+                .fontColor(AppTheme.TEXT_SUB)
+                .width('100%')
+                .margin({ top: idx === 0 ? 12 : 6 })
+                .textAlign(TextAlign.Start)
+            }, (line: string, idx: number) => idx.toString() + '|' + line)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding({ bottom: 12 })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.Top)
+        .scrollBar(BarState.Auto)
+        .edgeEffect(EdgeEffect.None)
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
   build() {
     Column() {
-      this.topHeader()
+      ForEach([this.themeRev], (rev: number) => {
+        Column() {
+          this.topHeader()
 
-      if (this.sub === SET_BACKUP) {
-        this.backupPage()
-      } else if (this.sub === SET_ABOUT) {
-        this.aboutPage()
-      } else if (this.sub === SET_APPEARANCE) {
-        this.appearancePage()
-      } else {
-        this.navPage()
-        Blank()
-      }
+          if (this.sub === SET_BACKUP) {
+            this.backupPage()
+          } else if (this.sub === SET_ABOUT) {
+            this.aboutPage()
+          } else if (this.sub === SET_APPEARANCE) {
+            this.appearancePage()
+          } else if (this.sub === SET_CONN) {
+            this.connPage()
+          } else if (this.sub === SET_LOGS) {
+            this.logPage()
+          } else {
+            this.navPage()
+            Blank()
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }, (rev: number) => 'theme-' + rev.toString())
     }
     .width('100%')
     .height('100%')

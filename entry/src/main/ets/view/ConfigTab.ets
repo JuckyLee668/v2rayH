@@ -3,15 +3,18 @@ import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { scanBarcode } from '@kit.ScanKit';
 import { AppState } from '../common/AppState';
 import { AppTheme } from '../common/AppTheme';
-import { parseSubscription } from '../common/V2rayParser';
+import { parseSubscription, buildShareLink } from '../common/V2rayParser';
 import { ServerConfig } from '../model/ServerConfig';
 import { SubGroup } from '../model/SubGroup';
+import { ShareSheet } from './ShareSheet';
 
 const SUB_OVERVIEW: number = 0;
 const SUB_GROUPS: number = 1;
 const SUB_ROUTING: number = 2;
 const SUB_GEO: number = 3;
 const SUB_MANUAL: number = 4;
+const SUB_NODES: number = 5;
+const SUB_PERAPP: number = 6;
 const ACT_SCAN: number = 100;
 const ACT_CLIPBOARD: number = 101;
 
@@ -23,8 +26,23 @@ export struct ConfigTab {
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @State sub: number = SUB_OVERVIEW;
-  @State groupNameDraft: string = '';
   @State groupUrlDraft: string = '';
+  @State groupNameDraft: string = '';
+  @State showShare: boolean = false;
+  @State shareText: string = '';
+  @State shareTitle: string = '分享订阅';
+  @State nodeGroupIdx: number = -1;
+  @State groupCreateOpen: boolean = false;
+  @State groupEditIdx: number = -1;
+  @State geName: string = '';
+  @State geUrl: string = '';
+  @State editIdx: number = -1;
+  @State eName: string = '';
+  @State eAddress: string = '';
+  @State ePort: string = '';
+  @State eCredential: string = '';
+  @State quickLinkDraft: string = '';
+  @State advancedOpen: boolean = false;
   @State directDraft: string = '';
   @State proxyDraft: string = '';
   @State mName: string = '';
@@ -40,6 +58,7 @@ export struct ConfigTab {
   @State mPbk: string = '';
   @State mSid: string = '';
   @State mFp: string = 'chrome';
+  @State perAppDraft: string = '';
 
 
   private subTitle(): string {
@@ -54,6 +73,12 @@ export struct ConfigTab {
     }
     if (this.sub === SUB_MANUAL) {
       return '手动添加';
+    }
+    if (this.sub === SUB_NODES) {
+      return '节点管理';
+    }
+    if (this.sub === SUB_PERAPP) {
+      return '分应用代理';
     }
     return '配置';
   }
@@ -73,7 +98,13 @@ export struct ConfigTab {
       return 'geosite / geoip 规则文件';
     }
     if (this.sub === SUB_MANUAL) {
-      return '手动填写节点参数';
+      return '粘贴链接快速添加，或手动填写参数';
+    }
+    if (this.sub === SUB_NODES) {
+      return '分组内节点的编辑、删除与分享';
+    }
+    if (this.sub === SUB_PERAPP) {
+      return '选择哪些应用的流量经过 VPN';
     }
     return '订阅 · 分流 · 资源';
   }
@@ -95,7 +126,7 @@ export struct ConfigTab {
           .height(36)
           .alignItems(VerticalAlign.Center)
           .onClick(() => {
-            this.sub = SUB_OVERVIEW;
+            this.sub = this.sub === SUB_NODES ? SUB_GROUPS : SUB_OVERVIEW;
           })
         }
 
@@ -162,6 +193,8 @@ export struct ConfigTab {
       this.navRow($r('sys.symbol.list_bullet'), '订阅分组', this.app.groups.length.toString() + ' 个分组', SUB_GROUPS)
       Divider().strokeWidth(1).color(AppTheme.DIVIDER).margin({ left: 14, right: 14 })
       this.navRow($r('sys.symbol.network_acceleration'), '路由设置', this.app.routeBypassCn ? 'CN 直连 · 广告拦截' : '全局代理', SUB_ROUTING)
+      Divider().strokeWidth(1).color(AppTheme.DIVIDER).margin({ left: 14, right: 14 })
+      this.navRow($r('sys.symbol.square_grid_2x2'), '分应用代理', this.app.perAppModeText() + ' · ' + this.app.perAppBundles.length.toString() + ' 个应用', SUB_PERAPP)
       Divider().strokeWidth(1).color(AppTheme.DIVIDER).margin({ left: 14, right: 14 })
       this.navRow($r('sys.symbol.doc'), '资源文件', 'geosite ' + this.app.sizeText(this.app.geositeSize), SUB_GEO)
     }
@@ -341,6 +374,20 @@ export struct ConfigTab {
       .alignItems(HorizontalAlign.Start)
 
       Row({ space: 2 }) {
+        SymbolGlyph($r('sys.symbol.list_bullet'))
+          .fontSize(18)
+          .fontColor([AppTheme.PRIMARY])
+          .padding(8)
+          .onClick(() => {
+            this.openGroupNodes(idx);
+          })
+        SymbolGlyph($r('sys.symbol.share'))
+          .fontSize(18)
+          .fontColor([AppTheme.TEXT_SUB])
+          .padding(8)
+          .onClick(() => {
+            this.shareGroup(idx);
+          })
         if (g.url.length > 0) {
           SymbolGlyph($r('sys.symbol.arrow_2_circlepath'))
             .fontSize(18)
@@ -350,6 +397,13 @@ export struct ConfigTab {
               this.app.updateGroupSubscription(idx);
             })
         }
+        SymbolGlyph($r('sys.symbol.square_and_pencil'))
+          .fontSize(18)
+          .fontColor([AppTheme.TEXT_SUB])
+          .padding(8)
+          .onClick(() => {
+            this.openGroupEdit(idx);
+          })
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
           .fontColor([AppTheme.DANGER])
@@ -387,6 +441,34 @@ export struct ConfigTab {
   groupsPage() {
     Column() {
       Row() {
+        Column() {
+          Text('启动时自动更新')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+          Text('打开应用时静默更新所有带链接的分组')
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_SUB)
+            .margin({ top: 2 })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Toggle({ type: ToggleType.Switch, isOn: this.app.autoUpdateSubs })
+          .onChange((v: boolean) => {
+            this.app.setAutoUpdateSubs(v);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 14, right: 14, top: 11, bottom: 11 })
+      .backgroundColor(AppTheme.CARD_BG)
+      .borderRadius(AppTheme.CARD_RADIUS)
+      .margin({ top: 10 })
+
+      Row() {
         Text('共 ' + this.app.groups.length.toString() + ' 个分组')
           .fontSize(12)
           .fontColor(AppTheme.TEXT_WEAK)
@@ -422,65 +504,543 @@ export struct ConfigTab {
       .layoutWeight(1)
       .scrollBar(BarState.Off)
 
-      Column() {
-        Text('新建分组')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppTheme.TEXT)
+      if (this.groupEditIdx >= 0) {
+        Column({ space: 8 }) {
+          Text('编辑分组「' + (this.groupEditIdx >= 0 && this.groupEditIdx < this.app.groups.length ? this.app.groups[this.groupEditIdx].name : '') + '」')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+            .width('100%')
+          TextInput({ text: this.geName, placeholder: '分组名称' })
+            .height(40)
+            .fontSize(13)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(12)
+            .onChange((v: string) => {
+              this.geName = v;
+            })
+          TextInput({ text: this.geUrl, placeholder: '订阅链接（可留空）' })
+            .height(40)
+            .fontSize(13)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(12)
+            .onChange((v: string) => {
+              this.geUrl = v;
+            })
+          Row({ space: 8 }) {
+            Button('取消')
+              .layoutWeight(1)
+              .height(38)
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT_SUB)
+              .backgroundColor(AppTheme.CHIP_BG)
+              .borderRadius(19)
+              .onClick(() => {
+                this.groupEditIdx = -1;
+              })
+            Button('保存修改')
+              .layoutWeight(1)
+              .height(38)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor(AppTheme.PRIMARY)
+              .borderRadius(19)
+              .onClick(() => {
+                this.saveGroupEdit();
+              })
+          }
           .width('100%')
-        TextInput({ text: this.groupNameDraft, placeholder: '分组名称，例如 自用 / 机场A' })
-          .height(42)
-          .fontSize(13)
-          .backgroundColor(AppTheme.CHIP_BG)
-          .borderRadius(12)
-          .margin({ top: 8 })
-          .onChange((v: string) => {
-            this.groupNameDraft = v;
-          })
-        TextInput({ text: this.groupUrlDraft, placeholder: '订阅链接（可留空后手动添加）' })
-          .height(42)
-          .fontSize(13)
-          .backgroundColor(AppTheme.CHIP_BG)
-          .borderRadius(12)
-          .margin({ top: 8 })
-          .onChange((v: string) => {
-            this.groupUrlDraft = v;
-          })
-        Button('创建分组并拉取订阅')
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(AppTheme.CARD_BG)
+        .borderRadius(AppTheme.CARD_RADIUS)
+        .margin({ top: 10 })
+      } else if (!this.groupCreateOpen) {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.plus_circle'))
+            .fontSize(16)
+            .fontColor([AppTheme.PRIMARY])
+          Text('新建分组')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.PRIMARY)
+        }
+        .width('100%')
+        .height(40)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(AppTheme.CARD_BG)
+        .borderRadius(20)
+        .margin({ top: 10 })
+        .onClick(() => {
+          this.groupCreateOpen = true;
+        })
+      } else {
+        Column({ space: 8 }) {
+          TextInput({ text: this.groupNameDraft, placeholder: '分组名称（可留空自动命名）' })
+            .height(40)
+            .fontSize(13)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(12)
+            .onChange((v: string) => {
+              this.groupNameDraft = v;
+            })
+          TextInput({ text: this.groupUrlDraft, placeholder: '订阅链接（可留空）' })
+            .height(40)
+            .fontSize(13)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(12)
+            .onChange((v: string) => {
+              this.groupUrlDraft = v;
+            })
+          Row({ space: 8 }) {
+            Button('取消')
+              .layoutWeight(1)
+              .height(38)
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT_SUB)
+              .backgroundColor(AppTheme.CHIP_BG)
+              .borderRadius(19)
+              .onClick(() => {
+                this.groupCreateOpen = false;
+                this.groupNameDraft = '';
+                this.groupUrlDraft = '';
+              })
+            Button('创建分组')
+              .layoutWeight(1)
+              .height(38)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor(AppTheme.PRIMARY)
+              .borderRadius(19)
+              .onClick(() => {
+                this.createGroupSimple();
+              })
+          }
           .width('100%')
-          .height(44)
-          .fontSize(15)
-          .fontColor(Color.White)
-          .backgroundColor(AppTheme.PRIMARY)
-          .borderRadius(22)
-          .enabled(!this.app.busy)
-          .margin({ top: 10 })
-          .onClick(() => {
-            this.createGroup();
-          })
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor(AppTheme.CARD_BG)
+        .borderRadius(AppTheme.CARD_RADIUS)
+        .margin({ top: 10 })
       }
-      .width('100%')
-      .padding(16)
-      .backgroundColor(AppTheme.CARD_BG)
-      .borderRadius(AppTheme.CARD_RADIUS)
-      .margin({ top: 10 })
     }
     .width('100%')
     .layoutWeight(1)
   }
 
-  private createGroup(): void {
+  private nextGroupName(): string {
+    let n = this.app.groups.length + 1;
+    let name = '订阅' + n.toString();
+    let clash = true;
+    while (clash) {
+      clash = false;
+      for (let i = 0; i < this.app.groups.length; i++) {
+        if (this.app.groups[i].name === name) {
+          clash = true;
+          break;
+        }
+      }
+      if (clash) {
+        n++;
+        name = '订阅' + n.toString();
+      }
+    }
+    return name;
+  }
+
+  private createGroupSimple(): void {
     let name = this.groupNameDraft.trim();
     if (name.length === 0) {
-      return;
+      name = this.nextGroupName();
     }
-    this.app.addGroup(name, this.groupUrlDraft.trim());
+    let url = this.groupUrlDraft.trim();
+    this.app.addGroup(name, url);
     this.groupNameDraft = '';
     this.groupUrlDraft = '';
-    this.sub = SUB_OVERVIEW;
-    if (this.app.subUrl.length > 0) {
-      this.app.updateSubscription();
+    this.groupCreateOpen = false;
+    if (url.length > 0) {
+      this.app.updateGroupSubscription(this.app.groups.length - 1);
     }
+  }
+
+  private openGroupEdit(idx: number): void {
+    if (idx < 0 || idx >= this.app.groups.length) {
+      return;
+    }
+    let g = this.app.groups[idx];
+    this.geName = g.name;
+    this.geUrl = g.url;
+    this.groupCreateOpen = false;
+    this.groupEditIdx = idx;
+  }
+
+  private saveGroupEdit(): void {
+    let idx = this.groupEditIdx;
+    if (idx < 0 || idx >= this.app.groups.length) {
+      this.groupEditIdx = -1;
+      return;
+    }
+    let name = this.geName.trim();
+    if (name.length === 0) {
+      this.app.status = '分组名称不能为空';
+      return;
+    }
+    this.app.updateGroupMeta(idx, name, this.geUrl.trim());
+    this.groupEditIdx = -1;
+  }
+
+  private shareGroup(idx: number): void {
+    if (idx < 0 || idx >= this.app.groups.length) {
+      return;
+    }
+    let g = this.app.groups[idx];
+    if (g.url.trim().length > 0) {
+      this.shareTitle = '分享订阅';
+      this.shareText = g.url.trim();
+      this.showShare = true;
+      return;
+    }
+    let nodes: ServerConfig[] = g.nodes !== undefined ? g.nodes : [];
+    let links: string[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      let link = buildShareLink(nodes[i]);
+      if (link.length > 0) {
+        links.push(link);
+      }
+    }
+    if (links.length === 0) {
+      this.app.status = '该分组没有可分享的节点';
+      return;
+    }
+    this.shareTitle = '分享分组节点';
+    this.shareText = links.join('\n');
+    this.showShare = true;
+  }
+
+  @Builder
+  shareSheetBuilder() {
+    ShareSheet({ shareText: $shareText, sheetTitle: this.shareTitle })
+  }
+
+  // ---------------- group nodes management ----------------
+
+  private openGroupNodes(idx: number): void {
+    if (idx < 0 || idx >= this.app.groups.length) {
+      return;
+    }
+    this.nodeGroupIdx = idx;
+    this.editIdx = -1;
+    this.sub = SUB_NODES;
+  }
+
+  private nodeGroup(): SubGroup | undefined {
+    if (this.nodeGroupIdx < 0 || this.nodeGroupIdx >= this.app.groups.length) {
+      return undefined;
+    }
+    return this.app.groups[this.nodeGroupIdx];
+  }
+
+  private groupNodes(): ServerConfig[] {
+    let g = this.nodeGroup();
+    return g !== undefined && g.nodes !== undefined ? g.nodes : [];
+  }
+
+  private nodeGroupTitle(): string {
+    let g = this.nodeGroup();
+    if (g === undefined) {
+      return '分组不存在';
+    }
+    let nodes = g.nodes !== undefined ? g.nodes : [];
+    return '「' + g.name + '」· ' + nodes.length.toString() + ' 个节点';
+  }
+
+  private openNodeEdit(idx: number): void {
+    let nodes = this.groupNodes();
+    if (idx < 0 || idx >= nodes.length) {
+      return;
+    }
+    let s: ServerConfig = nodes[idx];
+    this.eName = s.name;
+    this.eAddress = s.address;
+    this.ePort = s.port.toString();
+    this.eCredential = s.protocol === 'vless' || s.protocol === 'vmess' ? s.uuid : s.password;
+    this.editIdx = idx;
+  }
+
+  private credentialLabel(): string {
+    let nodes = this.groupNodes();
+    if (this.editIdx >= 0 && this.editIdx < nodes.length) {
+      let p: string = nodes[this.editIdx].protocol;
+      if (p === 'vless' || p === 'vmess') {
+        return '用户 ID (UUID)';
+      }
+    }
+    return '密码';
+  }
+
+  private saveNodeEdit(): void {
+    let nodes = this.groupNodes();
+    let idx = this.editIdx;
+    if (idx < 0 || idx >= nodes.length) {
+      this.editIdx = -1;
+      return;
+    }
+    let port = parseInt(this.ePort, 10);
+    let address = this.eAddress.trim();
+    if (address.length === 0 || isNaN(port) || port <= 0 || port > 65535) {
+      this.app.status = '请检查地址与端口';
+      return;
+    }
+    let s: ServerConfig = nodes[idx];
+    s.name = this.eName.trim().length > 0 ? this.eName.trim() : s.name;
+    s.address = address;
+    s.port = port;
+    let cred = this.eCredential.trim();
+    if (cred.length > 0) {
+      if (s.protocol === 'vless' || s.protocol === 'vmess') {
+        s.uuid = cred;
+      } else {
+        s.password = cred;
+      }
+    }
+    this.app.updateGroupNode(this.nodeGroupIdx, idx, s);
+    this.editIdx = -1;
+  }
+
+  private openNodeShare(idx: number): void {
+    let nodes = this.groupNodes();
+    if (idx < 0 || idx >= nodes.length) {
+      return;
+    }
+    let link = buildShareLink(nodes[idx]);
+    if (link.length === 0) {
+      this.app.status = '该节点协议不支持分享';
+      return;
+    }
+    this.shareText = link;
+    this.shareTitle = '分享节点';
+    this.showShare = true;
+  }
+
+  private confirmRemoveNode(idx: number): void {
+    let nodes = this.groupNodes();
+    if (idx < 0 || idx >= nodes.length) {
+      return;
+    }
+    let name = nodes[idx].name;
+    AlertDialog.show({
+      title: '删除节点',
+      message: '确定删除「' + name + '」？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        action: () => {
+          this.app.removeGroupNode(this.nodeGroupIdx, idx);
+        }
+      }
+    });
+  }
+
+  @Builder
+  groupNodeRow(item: ServerConfig, idx: number) {
+    Row() {
+      Column() {
+        Text(item.name)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(item.protocol + ' · ' + item.address + ':' + item.port.toString())
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .margin({ top: 3 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Row() {
+        Text('分享')
+          .fontSize(11)
+          .fontColor(AppTheme.PRIMARY)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(100)
+          .onClick(() => {
+            this.openNodeShare(idx);
+          })
+        Text('编辑')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(100)
+          .margin({ left: 6 })
+          .onClick(() => {
+            this.openNodeEdit(idx);
+          })
+        Text('删除')
+          .fontSize(11)
+          .fontColor(AppTheme.DANGER)
+          .padding({ left: 8, right: 8, top: 5, bottom: 5 })
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(100)
+          .margin({ left: 6 })
+          .onClick(() => {
+            this.confirmRemoveNode(idx);
+          })
+      }
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 14, right: 10, top: 12, bottom: 12 })
+  }
+
+  @Builder
+  nodeEditPanel() {
+    Scroll() {
+      Column() {
+        Text('编辑节点')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+          .width('100%')
+
+        Column() {
+          CfgField({ label: '备注名称', value: this.eName, placeholder: '节点显示名称', onEdit: (v: string) => {
+            this.eName = v;
+          } })
+          CfgField({ label: '服务器地址', value: this.eAddress, placeholder: '域名或 IP', onEdit: (v: string) => {
+            this.eAddress = v;
+          } })
+          CfgField({ label: '端口', value: this.ePort, placeholder: '443', onEdit: (v: string) => {
+            this.ePort = v;
+          } })
+          CfgField({
+            label: this.credentialLabel(),
+            value: this.eCredential,
+            placeholder: this.credentialLabel(),
+            onEdit: (v: string) => {
+              this.eCredential = v;
+            }
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(AppTheme.CARD_BG)
+        .borderRadius(AppTheme.CARD_RADIUS)
+        .margin({ top: 12 })
+
+        Button('保存修改')
+          .width('100%')
+          .height(46)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .backgroundColor(AppTheme.PRIMARY)
+          .borderRadius(23)
+          .margin({ top: 14 })
+          .onClick(() => {
+            this.saveNodeEdit();
+          })
+
+        Button('取消')
+          .width('100%')
+          .height(42)
+          .fontSize(14)
+          .fontColor(AppTheme.TEXT_SUB)
+          .backgroundColor(AppTheme.CHIP_BG)
+          .borderRadius(21)
+          .margin({ top: 10 })
+          .onClick(() => {
+            this.editIdx = -1;
+          })
+
+        Text('仅修改以上字段，其余参数保持原值')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_WEAK)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ top: 10 })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  nodesPage() {
+    Column() {
+      if (this.editIdx >= 0) {
+        this.nodeEditPanel()
+      } else {
+        Text(this.nodeGroupTitle())
+          .fontSize(12)
+          .fontColor(AppTheme.TEXT_WEAK)
+          .width('100%')
+          .margin({ top: 10, bottom: 2 })
+
+        if (this.groupNodes().length === 0) {
+          Column() {
+            SymbolGlyph($r('sys.symbol.list_bullet'))
+              .fontSize(34)
+              .fontColor([AppTheme.TEXT_WEAK])
+            Text('该分组还没有节点')
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT_SUB)
+              .margin({ top: 10 })
+            Text('可通过更新订阅或手动添加导入节点')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_WEAK)
+              .margin({ top: 6 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          List({ space: 8 }) {
+            ForEach(this.groupNodes(), (item: ServerConfig, idx: number) => {
+              ListItem() {
+                this.groupNodeRow(item, idx)
+              }
+              .backgroundColor(AppTheme.CARD_BG)
+              .borderRadius(14)
+            }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|' + item.address)
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+        }
+
+        if (this.app.status.length > 0) {
+          Text(this.app.status)
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .maxLines(2)
+            .margin({ top: 8, bottom: 8 })
+        }
+      }
+    }
+    .width('100%')
+    .layoutWeight(1)
   }
 
   // ---------------- manual add ----------------
@@ -529,144 +1089,216 @@ export struct ConfigTab {
     this.sub = SUB_OVERVIEW;
   }
 
+  private quickAdd(): void {
+    let text = this.quickLinkDraft.trim();
+    if (text.length === 0) {
+      this.app.status = '请先粘贴节点分享链接';
+      return;
+    }
+    let list = parseSubscription(text);
+    if (list.length === 0) {
+      this.app.status = '无法识别的节点链接';
+      return;
+    }
+    this.app.addServers(list, '本机节点');
+    this.quickLinkDraft = '';
+    this.sub = SUB_OVERVIEW;
+  }
+
   @Builder
   manualPage() {
     Scroll() {
       Column() {
         Column() {
-          Text('协议')
-            .fontSize(12)
-            .fontColor(AppTheme.TEXT_SUB)
-            .width('100%')
-          Flex({ wrap: FlexWrap.Wrap }) {
-            CfgChoiceChip({ label: 'VLESS', active: this.mProtocol === 'vless', onPick: () => {
-              this.mProtocol = 'vless';
-            } })
-            CfgChoiceChip({ label: 'VMess', active: this.mProtocol === 'vmess', onPick: () => {
-              this.mProtocol = 'vmess';
-            } })
-            CfgChoiceChip({ label: 'Trojan', active: this.mProtocol === 'trojan', onPick: () => {
-              this.mProtocol = 'trojan';
-            } })
-            CfgChoiceChip({ label: 'Shadowsocks', active: this.mProtocol === 'shadowsocks', onPick: () => {
-              this.mProtocol = 'shadowsocks';
-            } })
-          }
-          .width('100%')
-          .margin({ top: 4 })
-
-          CfgField({ label: '备注名称', value: this.mName, placeholder: '例如 香港01', onEdit: (v: string) => {
-            this.mName = v;
-          } })
-          CfgField({ label: '服务器地址', value: this.mAddress, placeholder: '域名或 IP', onEdit: (v: string) => {
-            this.mAddress = v;
-          } })
-          CfgField({ label: '端口', value: this.mPort, placeholder: '443', onEdit: (v: string) => {
-            this.mPort = v;
-          } })
-          CfgField({
-            label: this.isUuidProtocol() ? '用户 ID (UUID)' : '密码',
-            value: this.mCredential,
-            placeholder: this.isUuidProtocol() ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' : '密码',
-            onEdit: (v: string) => {
-              this.mCredential = v;
-            }
-          })
-
-          if (this.mProtocol === 'shadowsocks') {
-            CfgField({ label: '加密方式', value: this.mMethod, placeholder: 'aes-128-gcm / chacha20-ietf-poly1305', onEdit: (v: string) => {
-              this.mMethod = v;
-            } })
-          }
-
-          Text('传输方式')
-            .fontSize(12)
-            .fontColor(AppTheme.TEXT_SUB)
-            .width('100%')
-            .margin({ top: 14 })
-          Flex({ wrap: FlexWrap.Wrap }) {
-            CfgChoiceChip({ label: 'TCP', active: this.mNetwork === 'tcp', onPick: () => {
-              this.mNetwork = 'tcp';
-            } })
-            CfgChoiceChip({ label: 'WebSocket', active: this.mNetwork === 'ws', onPick: () => {
-              this.mNetwork = 'ws';
-            } })
-            CfgChoiceChip({ label: 'gRPC', active: this.mNetwork === 'grpc', onPick: () => {
-              this.mNetwork = 'grpc';
-            } })
-          }
-          .width('100%')
-          .margin({ top: 4 })
-
-          if (this.mNetwork !== 'tcp') {
-            CfgField({ label: this.mNetwork === 'grpc' ? '服务名' : '路径 (path)', value: this.mPath, placeholder: '/ws', onEdit: (v: string) => {
-              this.mPath = v;
-            } })
-          }
-
-          Text('安全')
-            .fontSize(12)
-            .fontColor(AppTheme.TEXT_SUB)
-            .width('100%')
-            .margin({ top: 14 })
-          Flex({ wrap: FlexWrap.Wrap }) {
-            CfgChoiceChip({ label: '无', active: this.mSecurity === 'none', onPick: () => {
-              this.mSecurity = 'none';
-            } })
-            CfgChoiceChip({ label: 'TLS', active: this.mSecurity === 'tls', onPick: () => {
-              this.mSecurity = 'tls';
-            } })
-            CfgChoiceChip({ label: 'REALITY', active: this.mSecurity === 'reality', onPick: () => {
-              this.mSecurity = 'reality';
-            } })
-          }
-          .width('100%')
-          .margin({ top: 4 })
-
-          if (this.mSecurity === 'tls' || this.mSecurity === 'reality') {
-            CfgField({ label: 'SNI', value: this.mSni, placeholder: '例如 www.example.com', onEdit: (v: string) => {
-              this.mSni = v;
-            } })
-          }
-          if (this.mSecurity === 'reality') {
-            CfgField({ label: '公钥 (pbk)', value: this.mPbk, placeholder: 'REALITY 公钥', onEdit: (v: string) => {
-              this.mPbk = v;
-            } })
-            CfgField({ label: 'Short ID', value: this.mSid, placeholder: '可留空', onEdit: (v: string) => {
-              this.mSid = v;
-            } })
-            CfgField({ label: '指纹 (fp)', value: this.mFp, placeholder: 'chrome', onEdit: (v: string) => {
-              this.mFp = v;
-            } })
-          }
-
-          Button('保存到「' + this.app.activeGroupName() + '」')
-            .width('100%')
-            .height(46)
-            .fontSize(15)
+          Text('快速添加')
+            .fontSize(14)
             .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+            .width('100%')
+          Text('粘贴 vless / vmess / trojan / ss 分享链接，自动解析全部参数，支持一次多个')
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .width('100%')
+            .margin({ top: 4 })
+          TextInput({ text: this.quickLinkDraft, placeholder: 'vless://...' })
+            .height(46)
+            .fontSize(13)
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(12)
+            .margin({ top: 10 })
+            .onChange((v: string) => {
+              this.quickLinkDraft = v;
+            })
+          Button('解析并添加')
+            .width('100%')
+            .height(44)
+            .fontSize(15)
             .fontColor(Color.White)
             .backgroundColor(AppTheme.PRIMARY)
-            .borderRadius(23)
-            .margin({ top: 18 })
+            .borderRadius(22)
+            .margin({ top: 10 })
             .onClick(() => {
-              this.saveManual();
+              this.quickAdd();
             })
-
-          if (this.app.status.length > 0) {
-            Text(this.app.status)
-              .fontSize(11)
-              .fontColor(AppTheme.TEXT_WEAK)
-              .width('100%')
-              .textAlign(TextAlign.Center)
-              .margin({ top: 10 })
-              .maxLines(2)
-          }
         }
         .width('100%')
         .padding(16)
         .backgroundColor(AppTheme.CARD_BG)
         .borderRadius(AppTheme.CARD_RADIUS)
+
+        Row() {
+          Text('手动填写参数（高级）')
+            .fontSize(13)
+            .fontColor(AppTheme.TEXT_SUB)
+          Blank()
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(15)
+            .fontColor([AppTheme.TEXT_WEAK])
+            .rotate({ z: 1, angle: this.advancedOpen ? 180 : 0 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16, top: 14, bottom: 10 })
+        .onClick(() => {
+          this.advancedOpen = !this.advancedOpen;
+        })
+
+        if (this.advancedOpen) {
+          Column() {
+            Text('协议')
+              .fontSize(12)
+              .fontColor(AppTheme.TEXT_SUB)
+              .width('100%')
+            Flex({ wrap: FlexWrap.Wrap }) {
+              CfgChoiceChip({ label: 'VLESS', active: this.mProtocol === 'vless', onPick: () => {
+                this.mProtocol = 'vless';
+              } })
+              CfgChoiceChip({ label: 'VMess', active: this.mProtocol === 'vmess', onPick: () => {
+                this.mProtocol = 'vmess';
+              } })
+              CfgChoiceChip({ label: 'Trojan', active: this.mProtocol === 'trojan', onPick: () => {
+                this.mProtocol = 'trojan';
+              } })
+              CfgChoiceChip({ label: 'Shadowsocks', active: this.mProtocol === 'shadowsocks', onPick: () => {
+                this.mProtocol = 'shadowsocks';
+              } })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            CfgField({ label: '备注名称', value: this.mName, placeholder: '例如 香港01', onEdit: (v: string) => {
+              this.mName = v;
+            } })
+            CfgField({ label: '服务器地址', value: this.mAddress, placeholder: '域名或 IP', onEdit: (v: string) => {
+              this.mAddress = v;
+            } })
+            CfgField({ label: '端口', value: this.mPort, placeholder: '443', onEdit: (v: string) => {
+              this.mPort = v;
+            } })
+            CfgField({
+              label: this.isUuidProtocol() ? '用户 ID (UUID)' : '密码',
+              value: this.mCredential,
+              placeholder: this.isUuidProtocol() ? 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' : '密码',
+              onEdit: (v: string) => {
+                this.mCredential = v;
+              }
+            })
+
+            if (this.mProtocol === 'shadowsocks') {
+              CfgField({ label: '加密方式', value: this.mMethod, placeholder: 'aes-128-gcm / chacha20-ietf-poly1305', onEdit: (v: string) => {
+                this.mMethod = v;
+              } })
+            }
+
+            Text('传输方式')
+              .fontSize(12)
+              .fontColor(AppTheme.TEXT_SUB)
+              .width('100%')
+              .margin({ top: 14 })
+            Flex({ wrap: FlexWrap.Wrap }) {
+              CfgChoiceChip({ label: 'TCP', active: this.mNetwork === 'tcp', onPick: () => {
+                this.mNetwork = 'tcp';
+              } })
+              CfgChoiceChip({ label: 'WebSocket', active: this.mNetwork === 'ws', onPick: () => {
+                this.mNetwork = 'ws';
+              } })
+              CfgChoiceChip({ label: 'gRPC', active: this.mNetwork === 'grpc', onPick: () => {
+                this.mNetwork = 'grpc';
+              } })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            if (this.mNetwork !== 'tcp') {
+              CfgField({ label: this.mNetwork === 'grpc' ? '服务名' : '路径 (path)', value: this.mPath, placeholder: '/ws', onEdit: (v: string) => {
+                this.mPath = v;
+              } })
+            }
+
+            Text('安全')
+              .fontSize(12)
+              .fontColor(AppTheme.TEXT_SUB)
+              .width('100%')
+              .margin({ top: 14 })
+            Flex({ wrap: FlexWrap.Wrap }) {
+              CfgChoiceChip({ label: '无', active: this.mSecurity === 'none', onPick: () => {
+                this.mSecurity = 'none';
+              } })
+              CfgChoiceChip({ label: 'TLS', active: this.mSecurity === 'tls', onPick: () => {
+                this.mSecurity = 'tls';
+              } })
+              CfgChoiceChip({ label: 'REALITY', active: this.mSecurity === 'reality', onPick: () => {
+                this.mSecurity = 'reality';
+              } })
+            }
+            .width('100%')
+            .margin({ top: 4 })
+
+            if (this.mSecurity === 'tls' || this.mSecurity === 'reality') {
+              CfgField({ label: 'SNI', value: this.mSni, placeholder: '例如 www.example.com', onEdit: (v: string) => {
+                this.mSni = v;
+              } })
+            }
+            if (this.mSecurity === 'reality') {
+              CfgField({ label: '公钥 (pbk)', value: this.mPbk, placeholder: 'REALITY 公钥', onEdit: (v: string) => {
+                this.mPbk = v;
+              } })
+              CfgField({ label: 'Short ID', value: this.mSid, placeholder: '可留空', onEdit: (v: string) => {
+                this.mSid = v;
+              } })
+              CfgField({ label: '指纹 (fp)', value: this.mFp, placeholder: 'chrome', onEdit: (v: string) => {
+                this.mFp = v;
+              } })
+            }
+
+            Button('保存到「' + this.app.activeGroupName() + '」')
+              .width('100%')
+              .height(46)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor(AppTheme.PRIMARY)
+              .borderRadius(23)
+              .margin({ top: 18 })
+              .onClick(() => {
+                this.saveManual();
+              })
+          }
+          .width('100%')
+          .padding(16)
+          .backgroundColor(AppTheme.CARD_BG)
+          .borderRadius(AppTheme.CARD_RADIUS)
+        }
+
+        if (this.app.status.length > 0) {
+          Text(this.app.status)
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .margin({ top: 10 })
+            .maxLines(2)
+        }
       }
       .width('100%')
     }
@@ -842,6 +1474,147 @@ export struct ConfigTab {
           .width('100%')
           .textAlign(TextAlign.Center)
           .margin({ top: 14 })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+  }
+
+  // ---------------- per-app proxy ----------------
+
+  private perAppModeDesc(): string {
+    if (this.app.perAppMode === 'trust') {
+      return '仅列表内应用的流量经过 VPN，其余应用直连（v2rayH 自身始终直连）';
+    }
+    if (this.app.perAppMode === 'block') {
+      return '除列表内应用外的所有流量经过 VPN（v2rayH 自身始终直连）';
+    }
+    return '所有应用的流量都经过 VPN';
+  }
+
+  @Builder
+  perappPage() {
+    Scroll() {
+      Column() {
+        Column() {
+          Text('代理模式')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+            .width('100%')
+          Flex({ wrap: FlexWrap.Wrap }) {
+            CfgChoiceChip({ label: '全部应用', active: this.app.perAppMode === 'all', onPick: () => {
+              this.app.setPerAppMode('all');
+            } })
+            CfgChoiceChip({ label: '仅选中应用', active: this.app.perAppMode === 'trust', onPick: () => {
+              this.app.setPerAppMode('trust');
+            } })
+            CfgChoiceChip({ label: '排除选中应用', active: this.app.perAppMode === 'block', onPick: () => {
+              this.app.setPerAppMode('block');
+            } })
+          }
+          .width('100%')
+          .margin({ top: 4 })
+
+          Text(this.perAppModeDesc())
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .width('100%')
+            .margin({ top: 10 })
+
+          Divider()
+            .strokeWidth(1)
+            .color(AppTheme.DIVIDER)
+            .margin({ top: 14, bottom: 14 })
+
+          Row() {
+            Text('应用列表')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(AppTheme.TEXT)
+            Blank()
+            Text(this.app.perAppBundles.length.toString() + ' 个')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_WEAK)
+          }
+          .width('100%')
+
+          Row({ space: 8 }) {
+            TextInput({ text: this.perAppDraft, placeholder: '应用包名，如 com.example.app' })
+              .layoutWeight(1)
+              .height(42)
+              .fontSize(13)
+              .backgroundColor(AppTheme.CHIP_BG)
+              .borderRadius(12)
+              .onChange((v: string) => {
+                this.perAppDraft = v;
+              })
+            Button('添加')
+              .width(72)
+              .height(42)
+              .fontSize(14)
+              .fontColor(Color.White)
+              .backgroundColor(AppTheme.PRIMARY)
+              .borderRadius(21)
+              .onClick(() => {
+                if (this.app.addPerAppBundle(this.perAppDraft)) {
+                  this.perAppDraft = '';
+                } else if (this.perAppDraft.trim().length > 0) {
+                  this.app.status = '包名为空或已存在';
+                }
+              })
+          }
+          .width('100%')
+          .margin({ top: 10 })
+
+          ForEach(this.app.perAppBundles, (b: string) => {
+            Row() {
+              Text(b)
+                .fontSize(13)
+                .fontColor(AppTheme.TEXT)
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              SymbolGlyph($r('sys.symbol.xmark_circle'))
+                .fontSize(16)
+                .fontColor([AppTheme.TEXT_WEAK])
+                .onClick(() => {
+                  this.app.removePerAppBundle(b);
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+            .backgroundColor(AppTheme.CHIP_BG)
+            .borderRadius(10)
+            .margin({ top: 8 })
+          }, (b: string, i: number) => i.toString() + '|' + b)
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(AppTheme.CARD_BG)
+        .borderRadius(AppTheme.CARD_RADIUS)
+        .margin({ top: 12 })
+        .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
+
+        Text('系统不允许应用读取已安装应用列表，需手动输入应用包名（bundle name）。修改后需重新连接 VPN 生效。')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_WEAK)
+          .width('100%')
+          .margin({ top: 12, left: 4 })
+          .maxLines(4)
+
+        if (this.app.status.length > 0) {
+          Text(this.app.status)
+            .fontSize(11)
+            .fontColor(AppTheme.PRIMARY)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .margin({ top: 8 })
+            .maxLines(2)
+        }
       }
       .width('100%')
     }
@@ -1026,19 +1799,29 @@ export struct ConfigTab {
 
   build() {
     Column() {
-      this.topHeader()
+      ForEach([this.themeRev], (rev: number) => {
+        Column() {
+          this.topHeader()
 
-      if (this.sub === SUB_OVERVIEW) {
-        this.overview()
-      } else if (this.sub === SUB_GROUPS) {
-        this.groupsPage()
-      } else if (this.sub === SUB_ROUTING) {
-        this.routingPage()
-      } else if (this.sub === SUB_MANUAL) {
-        this.manualPage()
-      } else {
-        this.geoPage()
-      }
+          if (this.sub === SUB_OVERVIEW) {
+            this.overview()
+          } else if (this.sub === SUB_GROUPS) {
+            this.groupsPage()
+          } else if (this.sub === SUB_ROUTING) {
+            this.routingPage()
+          } else if (this.sub === SUB_MANUAL) {
+            this.manualPage()
+          } else if (this.sub === SUB_NODES) {
+            this.nodesPage()
+          } else if (this.sub === SUB_PERAPP) {
+            this.perappPage()
+          } else {
+            this.geoPage()
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }, (rev: number) => 'theme-' + rev.toString())
     }
     .width('100%')
     .height('100%')
@@ -1047,6 +1830,11 @@ export struct ConfigTab {
       right: AppTheme.PAGE_GAP,
       top: px2vp(this.topRectPx) + 8,
       bottom: px2vp(this.bottomRectPx) + AppTheme.BAR_RESERVE
+    })
+    .bindSheet($$this.showShare, this.shareSheetBuilder(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: true,
+      showClose: true
     })
   }
 }

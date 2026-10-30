@@ -1,5 +1,4 @@
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
-import { AppTheme } from '../common/AppTheme';
 import { AppState } from '../common/AppState';
 import { HomeTab } from '../view/HomeTab';
 import { ConfigTab } from '../view/ConfigTab';
@@ -14,7 +13,9 @@ struct Index {
   @State settingsReset: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @StorageProp('systemDarkFlag') @Watch('onSystemDark') systemDarkFlag: boolean = false;
-  @StorageLink('themeRev') themeRev: number = 0;
+  @StorageProp('theme.pageBg') themedPageBg: string = '#f2f2f7';
+  @StorageProp('theme.primary') themedPrimary: string = '#0a59f7';
+  @StorageProp('theme.textSub') themedTextSub: string = '#8a8a8e';
   private tabsController: HdsTabsController = new HdsTabsController();
 
   onSystemDark(): void {
@@ -36,6 +37,8 @@ struct Index {
     let ctx = this.getUIContext().getHostContext();
     if (ctx !== undefined) {
       this.app.init(ctx);
+      this.app.maybeAutoConnect();
+      this.app.maybeAutoUpdateSubs();
     }
   }
 
@@ -44,10 +47,10 @@ struct Index {
     Column({ space: 2 }) {
       SymbolGlyph(icon)
         .fontSize(22)
-        .fontColor([this.currentIndex === idx ? AppTheme.PRIMARY : AppTheme.TEXT_SUB])
+        .fontColor([this.currentIndex === idx ? this.themedPrimary : this.themedTextSub])
       Text(label)
         .fontSize(10)
-        .fontColor(this.currentIndex === idx ? AppTheme.PRIMARY : AppTheme.TEXT_SUB)
+        .fontColor(this.currentIndex === idx ? this.themedPrimary : this.themedTextSub)
         .fontWeight(this.currentIndex === idx ? FontWeight.Medium : FontWeight.Normal)
     }
     .width('100%')
@@ -75,7 +78,7 @@ struct Index {
       }
       .width('100%')
       .layoutWeight(1)
-      .backgroundColor(AppTheme.PAGE_BG)
+      .backgroundColor(this.themedPageBg)
       .barMode(BarMode.Fixed)
       .barHeight(56)
       .barOverlap(true)

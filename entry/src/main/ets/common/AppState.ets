@@ -1,4 +1,4 @@
-import { vpnExtension } from '@kit.NetworkKit';
+import { vpnExtension, statistics, socket, connection } from '@kit.NetworkKit';
 import { Want, common, ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
@@ -27,6 +27,20 @@ const F_ROUTING: string = 'routing.json';
 const F_GEO: string = 'geo.json';
 const F_BACKUP_SNAPSHOT: string = 'backup-latest.json';
 const F_APPEARANCE: string = 'appearance.json';
+const F_PREFS: string = 'prefs.json';
+const F_PERAPP: string = 'perapp.json';
+const F_VPN_LOG: string = 'vpn.log';
+const F_XRAY_LOG: string = 'xray_error.log';
+const F_MULTI: string = 'multi_select.json';
+
+const PING_TIMEOUT_MS: number = 4000;
+const PING_CONCURRENCY: number = 5;
+
+const FAILOVER_CHECK_MS: number = 45000;
+const FAILOVER_FAIL_LIMIT: number = 2;
+const FAILOVER_COOLDOWN_MS: number = 120000;
+const FAILOVER_PROBE_TIMEOUT_MS: number = 15000;
+const LOG_TAIL_LINES: number = 400;
 
 const SOCKS_HOST: string = '127.0.0.1';
 const SOCKS_PORT: number = 10809;
@@ -39,6 +53,31 @@ class IpEcho {
 class AppearanceOptions {
   darkMode: number = 0;
   accentIndex: number = 0;
+}
+
+class PrefsOptions {
+  autoUpdateSubs: boolean = false;
+  autoConnect: boolean = false;
+  failover: boolean = false;
+}
+
+class PerAppOptions {
+  mode: string = 'all';
+  bundles: string[] = [];
+}
+
+class PingSortEntry {
+  rank: number = 0;
+  ping: number = 0;
+  oldIdx: number = 0;
+  server: ServerConfig = new ServerConfig();
+
+  constructor(rank: number, ping: number, oldIdx: number, server: ServerConfig) {
+    this.rank = rank;
+    this.ping = ping;
+    this.oldIdx = oldIdx;
+    this.server = server;
+  }
 }
 
 
@@ -56,6 +95,7 @@ export class AppState {
   activeGroup: number = 0;
   servers: ServerConfig[] = [];
   selected: number = 0;
+  multiKeys: string[] = [];
   status: string = '';
   subUrl: string = '';
   busy: boolean = false;
@@ -67,16 +107,32 @@ export class AppState {
   downloadNodeKey: string = '';
   downloadError: string = '';
   coreVersion: string = '';
-  appVersion: string = '0.2.2';
+  appVersion: string = '0.3.0';
   exitIp: string = '';
   ipBusy: boolean = false;
   ipError: string = '';
+  connectedAt: number = 0;
+  sessionRx: number = 0;
+  sessionTx: number = 0;
+  autoUpdateSubs: boolean = false;
+  autoConnect: boolean = false;
+  failover: boolean = false;
+  private failoverTimerId: number = -1;
+  private failoverFails: number = 0;
+  private failoverCooldownUntil: number = 0;
+  private failoverSwitchCount: number = 0;
+  private failoverChecking: boolean = false;
+  private statsBaseRx: number = -1;
+  private statsBaseTx: number = -1;
+  private appUid: number = -1;
 
   routeBypassCn: boolean = true;
   routeBlockAds: boolean = true;
   routeStrategy: string = 'IPIfNonMatch';
   routeDirectDomains: string[] = [];
   routeProxyDomains: string[] = [];
+  perAppMode: string = 'all';
+  perAppBundles: string[] = [];
 
   geoUrlGeosite: string = '';
   geoUrlGeoip: string = '';
@@ -99,6 +155,9 @@ export class AppState {
     this.systemDark = AppStorage.get<boolean>('systemDarkFlag') === true;
     this.loadGroups();
     this.loadSettings();
+    this.loadPrefs();
+    this.loadMulti();
+    this.loadPerApp();
     this.loadAppearance();
     this.ensureGeoFiles(ctx);
     this.refreshGeoSize();
@@ -108,6 +167,128 @@ export class AppState {
     } catch (e) {
       console.error('read versionName failed: ' + JSON.stringify(e));
     }
+    if (this.ctx !== undefined) {
+      try {
+        this.appUid = this.ctx.applicationInfo.uid;
+      } catch (e) {
+        console.error('read app uid failed: ' + JSON.stringify(e));
+      }
+    }
+  }
+
+  private loadPrefs(): void {
+    let text = this.store.readText(F_PREFS);
+    if (text.length > 0) {
+      try {
+        let p = JSON.parse(text) as PrefsOptions;
+        this.autoUpdateSubs = p.autoUpdateSubs === true;
+        this.autoConnect = p.autoConnect === true;
+        this.failover = p.failover === true;
+      } catch (e) {
+        console.error('parse prefs failed: ' + JSON.stringify(e));
+      }
+    }
+  }
+
+  private savePrefs(): void {
+    let p = new PrefsOptions();
+    p.autoUpdateSubs = this.autoUpdateSubs;
+    p.autoConnect = this.autoConnect;
+    p.failover = this.failover;
+    this.store.writeText(F_PREFS, JSON.stringify(p));
+  }
+
+  setAutoUpdateSubs(v: boolean): void {
+    this.autoUpdateSubs = v;
+    this.savePrefs();
+  }
+
+  setAutoConnect(v: boolean): void {
+    this.autoConnect = v;
+    this.savePrefs();
+  }
+
+  setFailover(v: boolean): void {
+    this.failover = v;
+    this.savePrefs();
+    if (v) {
+      this.startFailoverMonitor();
+    } else {
+      this.stopFailoverMonitor();
+    }
+  }
+
+  private loadMulti(): void {
+    this.multiKeys = [];
+    let text = this.store.readText(F_MULTI);
+    if (text.length > 0) {
+      try {
+        this.multiKeys = JSON.parse(text) as string[];
+      } catch (e) {
+        this.multiKeys = [];
+      }
+    }
+  }
+
+  private saveMulti(): void {
+    this.store.writeText(F_MULTI, JSON.stringify(this.multiKeys));
+  }
+
+  private loadPerApp(): void {
+    let text = this.store.readText(F_PERAPP);
+    if (text.length > 0) {
+      try {
+        let p = JSON.parse(text) as PerAppOptions;
+        this.perAppMode = p.mode === 'trust' || p.mode === 'block' ? p.mode : 'all';
+        this.perAppBundles = p.bundles !== undefined ? p.bundles : [];
+      } catch (e) {
+        console.error('parse perapp failed: ' + JSON.stringify(e));
+      }
+    }
+    this.savePerApp();
+  }
+
+  private savePerApp(): void {
+    let p = new PerAppOptions();
+    p.mode = this.perAppMode;
+    p.bundles = this.perAppBundles;
+    this.store.writeText(F_PERAPP, JSON.stringify(p));
+  }
+
+  setPerAppMode(mode: string): void {
+    this.perAppMode = mode;
+    this.savePerApp();
+  }
+
+  addPerAppBundle(bundle: string): boolean {
+    let b = bundle.trim();
+    if (b.length === 0 || this.perAppBundles.indexOf(b) >= 0) {
+      return false;
+    }
+    this.perAppBundles = this.perAppBundles.concat([b]);
+    this.savePerApp();
+    return true;
+  }
+
+  removePerAppBundle(bundle: string): void {
+    let next: string[] = [];
+    for (let i = 0; i < this.perAppBundles.length; i++) {
+      if (this.perAppBundles[i] !== bundle) {
+        next.push(this.perAppBundles[i]);
+      }
+    }
+    this.perAppBundles = next;
+    this.savePerApp();
+  }
+
+  perAppModeText(): string {
+    if (this.perAppMode === 'trust') {
+      return '仅代理选中应用';
+    }
+    if (this.perAppMode === 'block') {
+      return '排除选中应用';
+    }
+    return '全部应用';
   }
 
   isDark(): boolean {
@@ -116,6 +297,9 @@ export class AppState {
 
   private applyAppearance(): void {
     AppTheme.applyAppearance(this.isDark(), this.accentIndex);
+    AppStorage.setOrCreate('theme.pageBg', AppTheme.PAGE_BG);
+    AppStorage.setOrCreate('theme.primary', AppTheme.PRIMARY);
+    AppStorage.setOrCreate('theme.textSub', AppTheme.TEXT_SUB);
     let rev = AppStorage.get<number>('themeRev');
     AppStorage.setOrCreate('themeRev', (rev === undefined ? 0 : rev) + 1);
   }
@@ -272,6 +456,30 @@ export class AppState {
     this.status = '已创建分组: ' + name;
   }
 
+  updateGroupMeta(index: number, name: string, url: string): void {
+    if (index < 0 || index >= this.groups.length) {
+      return;
+    }
+    let next: SubGroup[] = [];
+    for (let i = 0; i < this.groups.length; i++) {
+      let g = this.groups[i];
+      if (i === index) {
+        let copy = new SubGroup(g.id, name, url);
+        copy.nodes = g.nodes;
+        copy.updatedAt = g.updatedAt;
+        next.push(copy);
+      } else {
+        next.push(g);
+      }
+    }
+    this.groups = next;
+    this.saveGroups();
+    if (index === this.activeGroup) {
+      this.subUrl = url;
+    }
+    this.status = '分组已更新';
+  }
+
   removeGroup(index: number): void {
     if (index < 0 || index >= this.groups.length) {
       return;
@@ -346,6 +554,9 @@ export class AppState {
     if (p === -2) {
       return '测速中';
     }
+    if (p === -3) {
+      return '--';
+    }
     if (p < 0) {
       return '超时';
     }
@@ -360,10 +571,63 @@ export class AppState {
     if (p === -2) {
       return '测试中';
     }
+    if (p === -3) {
+      return '';
+    }
     if (p < 0) {
       return '超时';
     }
     return p.toString() + 'ms';
+  }
+
+  // ---------- multi select ----------
+
+  isMulti(idx: number): boolean {
+    let key = this.nodeKey(idx);
+    if (key.length === 0) {
+      return false;
+    }
+    return this.multiKeys.indexOf(key) >= 0;
+  }
+
+  multiCount(): number {
+    return this.multiIndices().length;
+  }
+
+  multiIndices(): number[] {
+    let out: number[] = [];
+    for (let i = 0; i < this.servers.length; i++) {
+      if (this.multiKeys.indexOf(this.nodeKey(i)) >= 0) {
+        out.push(i);
+      }
+    }
+    return out;
+  }
+
+  toggleMulti(idx: number): void {
+    let key = this.nodeKey(idx);
+    if (key.length === 0) {
+      return;
+    }
+    let next: string[] = [];
+    let found = false;
+    for (let i = 0; i < this.multiKeys.length; i++) {
+      if (this.multiKeys[i] === key) {
+        found = true;
+      } else {
+        next.push(this.multiKeys[i]);
+      }
+    }
+    if (!found) {
+      next.push(key);
+    }
+    this.multiKeys = next;
+    this.saveMulti();
+  }
+
+  clearMulti(): void {
+    this.multiKeys = [];
+    this.saveMulti();
   }
 
   private serverKeyOf(s: ServerConfig): string {
@@ -395,17 +659,98 @@ export class AppState {
     return '下载 ' + this.downloadMbps().toFixed(2) + ' Mbps · ' + mbs.toFixed(2) + ' MB/s';
   }
 
-  selectServer(idx: number): void {
+  selectServer(idx: number, manual: boolean = true): void {
     if (idx < 0 || idx >= this.servers.length) {
       return;
     }
     if (idx === this.selected) {
       return;
     }
+    if (manual) {
+      this.failoverSwitchCount = 0;
+    }
     this.selected = idx;
     this.store.saveSelected(idx);
     if (this.connected) {
       this.switchNode();
+    }
+  }
+
+  private commitGroupNodes(groupIdx: number, nodes: ServerConfig[]): void {
+    if (groupIdx < 0 || groupIdx >= this.groups.length) {
+      return;
+    }
+    let next: SubGroup[] = [];
+    for (let i = 0; i < this.groups.length; i++) {
+      let g = this.groups[i];
+      if (i === groupIdx) {
+        let copy = new SubGroup(g.id, g.name, g.url);
+        copy.nodes = nodes;
+        copy.updatedAt = g.updatedAt;
+        next.push(copy);
+      } else {
+        next.push(g);
+      }
+    }
+    this.groups = next;
+    this.saveGroups();
+    if (groupIdx === this.activeGroup) {
+      this.servers = nodes;
+      if (this.selected >= nodes.length) {
+        this.selected = nodes.length > 0 ? nodes.length - 1 : 0;
+        this.store.saveSelected(this.selected);
+      }
+      this.pings = [];
+    }
+  }
+
+  updateGroupNode(groupIdx: number, nodeIdx: number, s: ServerConfig): void {
+    if (groupIdx < 0 || groupIdx >= this.groups.length) {
+      return;
+    }
+    let nodes: ServerConfig[] = this.groups[groupIdx].nodes !== undefined ? this.groups[groupIdx].nodes : [];
+    if (nodeIdx < 0 || nodeIdx >= nodes.length) {
+      return;
+    }
+    let next: ServerConfig[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      next.push(i === nodeIdx ? s : nodes[i]);
+    }
+    this.commitGroupNodes(groupIdx, next);
+    this.status = '节点已更新';
+    if (this.connected && groupIdx === this.activeGroup && nodeIdx === this.selected) {
+      this.switchNode();
+    }
+  }
+
+  removeGroupNode(groupIdx: number, nodeIdx: number): void {
+    if (groupIdx < 0 || groupIdx >= this.groups.length) {
+      return;
+    }
+    let nodes: ServerConfig[] = this.groups[groupIdx].nodes !== undefined ? this.groups[groupIdx].nodes : [];
+    if (nodeIdx < 0 || nodeIdx >= nodes.length) {
+      return;
+    }
+    let name = nodes[nodeIdx].name;
+    let wasSelected = groupIdx === this.activeGroup && nodeIdx === this.selected;
+    let next: ServerConfig[] = [];
+    for (let i = 0; i < nodes.length; i++) {
+      if (i !== nodeIdx) {
+        next.push(nodes[i]);
+      }
+    }
+    if (groupIdx === this.activeGroup && nodeIdx < this.selected) {
+      this.selected = this.selected - 1;
+      this.store.saveSelected(this.selected);
+    }
+    this.commitGroupNodes(groupIdx, next);
+    this.status = '已删除节点: ' + name;
+    if (this.connected && groupIdx === this.activeGroup) {
+      if (next.length === 0) {
+        this.disconnect();
+      } else if (wasSelected) {
+        this.switchNode();
+      }
     }
   }
 
@@ -486,10 +831,15 @@ export class AppState {
     if (ok) {
       this.connected = true;
       this.status = '';
+      this.failoverCooldownUntil = 0;
+      this.startFailoverMonitor();
+      this.beginTrafficSession();
       this.refreshExitIp();
     } else {
       this.connected = false;
       this.ipBusy = false;
+      this.endTrafficSession();
+      this.stopFailoverMonitor();
       this.status = '切换节点失败，请重试';
     }
   }
@@ -588,37 +938,294 @@ export class AppState {
     }
   }
 
+  async maybeAutoUpdateSubs(): Promise<void> {
+    if (!this.autoUpdateSubs || this.busy) {
+      return;
+    }
+    let count = 0;
+    for (let i = 0; i < this.groups.length; i++) {
+      if (this.groups[i].url.trim().length > 0) {
+        count++;
+      }
+    }
+    if (count === 0) {
+      return;
+    }
+    for (let i = 0; i < this.groups.length; i++) {
+      if (this.groups[i].url.trim().length > 0) {
+        await this.updateGroupSubscription(i);
+      }
+    }
+    this.status = '已自动更新 ' + count.toString() + ' 个订阅分组';
+  }
+
+  maybeAutoConnect(): void {
+    if (!this.autoConnect || this.connected || this.servers.length === 0) {
+      return;
+    }
+    this.appendRuntimeLog('[app] 启动自动连接: ' + this.nodeName());
+    this.connect();
+  }
+
+  // ---------- failover ----------
+
+  private startFailoverMonitor(): void {
+    if (!this.failover || !this.connected) {
+      return;
+    }
+    if (this.failoverTimerId >= 0) {
+      return;
+    }
+    this.failoverFails = 0;
+    this.failoverTimerId = setInterval(() => {
+      this.runFailoverCheck();
+    }, FAILOVER_CHECK_MS);
+  }
+
+  private stopFailoverMonitor(): void {
+    if (this.failoverTimerId >= 0) {
+      clearInterval(this.failoverTimerId);
+      this.failoverTimerId = -1;
+    }
+    this.failoverFails = 0;
+    this.failoverCooldownUntil = 0;
+    this.failoverChecking = false;
+  }
+
+  private async testNodeAlive(srv: ServerConfig): Promise<boolean> {
+    let cfg: string = buildTestConfig(srv);
+    let timeout: Promise<number> = sleepMs(FAILOVER_PROBE_TIMEOUT_MS).then((): number => -999);
+    try {
+      let ms: number = await Promise.race([testNapi.measureDelay(cfg, 'http://www.gstatic.com/generate_204'), timeout]);
+      return ms >= 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  private async runFailoverCheck(): Promise<void> {
+    if (!this.failover || !this.connected || this.failoverChecking) {
+      return;
+    }
+    if (Date.now() < this.failoverCooldownUntil) {
+      return;
+    }
+    let srv: ServerConfig | undefined = this.currentNode();
+    if (srv === undefined) {
+      return;
+    }
+    this.failoverChecking = true;
+    let alive: boolean = await this.testNodeAlive(srv);
+    this.failoverChecking = false;
+    if (!this.failover || !this.connected) {
+      return;
+    }
+    if (alive) {
+      this.failoverFails = 0;
+      return;
+    }
+    this.failoverFails++;
+    this.appendRuntimeLog('[failover] 节点不可达 ' + srv.name + ' ('
+      + this.failoverFails.toString() + '/' + FAILOVER_FAIL_LIMIT.toString() + ')');
+    if (this.failoverFails >= FAILOVER_FAIL_LIMIT) {
+      this.doFailoverSwitch(srv.name);
+    }
+  }
+
+  private doFailoverSwitch(badName: string): void {
+    this.failoverFails = 0;
+    this.failoverCooldownUntil = Date.now() + FAILOVER_COOLDOWN_MS;
+    if (this.servers.length < 2) {
+      this.appendRuntimeLog('[failover] 没有其他节点可切换');
+      this.status = '节点「' + badName + '」不可用（没有其他节点可切换）';
+      return;
+    }
+    if (this.failoverSwitchCount >= this.servers.length - 1) {
+      this.appendRuntimeLog('[failover] 所有节点均不可用，停止自动切换');
+      this.status = '所有节点均不可用，已停止自动切换';
+      this.stopFailoverMonitor();
+      return;
+    }
+    let next: number = (this.selected + 1) % this.servers.length;
+    let nextName: string = this.servers[next].name;
+    this.failoverSwitchCount++;
+    this.appendRuntimeLog('[failover] 自动切换 ' + badName + ' -> ' + nextName);
+    this.status = '故障转移: 「' + badName + '」不可用，已切换到「' + nextName + '」';
+    this.selectServer(next, false);
+  }
+
+  private isIpLiteral(host: string): boolean {
+    if (host.indexOf(':') >= 0) {
+      return true;
+    }
+    let parts = host.split('.');
+    if (parts.length !== 4) {
+      return false;
+    }
+    for (let i = 0; i < parts.length; i++) {
+      let p = parts[i];
+      if (p.length === 0 || p.length > 3) {
+        return false;
+      }
+      for (let j = 0; j < p.length; j++) {
+        let c = p.charCodeAt(j);
+        if (c < 48 || c > 57) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  private async resolveHost(host: string): Promise<string> {
+    if (this.isIpLiteral(host)) {
+      return host;
+    }
+    let guard: Promise<string> = sleepMs(PING_TIMEOUT_MS).then((): string => '');
+    let resolve: Promise<string> = connection.getDefaultNet().then((net: connection.NetHandle): Promise<string> => {
+      return net.getAddressByName(host).then((addr: connection.NetAddress): string => addr.address);
+    }).catch((): string => '');
+    return Promise.race([resolve, guard]);
+  }
+
+  private async tcpPingServer(srv: ServerConfig): Promise<number> {
+    let host: string = await this.resolveHost(srv.address);
+    if (host.length === 0) {
+      return -1;
+    }
+    let tcp: socket.TCPSocket = socket.constructTCPSocketInstance();
+    let start = Date.now();
+    try {
+      await tcp.connect({ address: { address: host, port: srv.port }, timeout: PING_TIMEOUT_MS });
+    } catch (e) {
+      try {
+        await tcp.close();
+      } catch (e2) {
+        console.error('tcp ping close failed');
+      }
+      return -1;
+    }
+    let ms = Date.now() - start;
+    try {
+      await tcp.close();
+    } catch (e3) {
+      console.error('tcp ping close failed after connect');
+    }
+    return ms;
+  }
+
+  private applyPingSort(): void {
+    if (this.servers.length < 2) {
+      return;
+    }
+    let selectedKey = this.nodeKey(this.selected);
+    let entries: PingSortEntry[] = [];
+    for (let i = 0; i < this.servers.length; i++) {
+      let ping = -3;
+      if (i < this.pings.length) {
+        ping = this.pings[i];
+      }
+      let rank = 1;
+      if (ping >= 0) {
+        rank = 0;
+      } else if (ping === -1) {
+        rank = 2;
+      }
+      entries.push(new PingSortEntry(rank, ping, i, this.servers[i]));
+    }
+    entries.sort((a: PingSortEntry, b: PingSortEntry): number => {
+      if (a.rank !== b.rank) {
+        return a.rank - b.rank;
+      }
+      if (a.rank === 0 && a.ping !== b.ping) {
+        return a.ping - b.ping;
+      }
+      return a.oldIdx - b.oldIdx;
+    });
+    let nextServers: ServerConfig[] = [];
+    let nextPings: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      nextServers.push(entries[i].server);
+      nextPings.push(entries[i].ping);
+    }
+    this.commitSortedNodes(nextServers, nextPings, selectedKey);
+  }
+
+  private commitSortedNodes(nodes: ServerConfig[], pings: number[], selectedKey: string): void {
+    this.servers = nodes;
+    this.pings = pings;
+    if (this.activeGroup >= 0 && this.activeGroup < this.groups.length) {
+      let next: SubGroup[] = [];
+      for (let i = 0; i < this.groups.length; i++) {
+        let g = this.groups[i];
+        if (i === this.activeGroup) {
+          let copy = new SubGroup(g.id, g.name, g.url);
+          copy.nodes = nodes;
+          copy.updatedAt = g.updatedAt;
+          next.push(copy);
+        } else {
+          next.push(g);
+        }
+      }
+      this.groups = next;
+      this.saveGroups();
+    }
+    let sel = 0;
+    if (selectedKey.length > 0) {
+      for (let i = 0; i < nodes.length; i++) {
+        if (this.serverKeyOf(nodes[i]) === selectedKey) {
+          sel = i;
+          break;
+        }
+      }
+    }
+    this.selected = sel;
+    this.store.saveSelected(sel);
+  }
+
   async testAll(): Promise<void> {
     if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
       return;
     }
+    let targets: number[] = this.multiIndices();
+    if (targets.length === 0) {
+      for (let i = 0; i < this.servers.length; i++) {
+        targets.push(i);
+      }
+    }
     let init: number[] = [];
     for (let i = 0; i < this.servers.length; i++) {
-      init.push(-2);
+      init.push(i < this.pings.length ? this.pings[i] : -3);
+    }
+    for (let i = 0; i < targets.length; i++) {
+      init[targets[i]] = -2;
     }
     this.pings = init;
     this.busy = true;
     this.testing = true;
-    this.status = '正在测速(经代理实测延迟)...';
+    this.status = '正在 TCP Ping 测速...';
     try {
-      for (let i = 0; i < this.servers.length; i++) {
-        let srv: ServerConfig = this.servers[i];
-        let ms: number = -1;
-        try {
-          let cfg: string = buildTestConfig(srv);
-          ms = await testNapi.measureDelay(cfg, 'http://www.gstatic.com/generate_204');
-        } catch (e) {
-          ms = -1;
+      let done = 0;
+      for (let c = 0; c < targets.length; c += PING_CONCURRENCY) {
+        let chunk: number[] = targets.slice(c, c + PING_CONCURRENCY);
+        let jobs: Promise<number>[] = [];
+        for (let j = 0; j < chunk.length; j++) {
+          jobs.push(this.tcpPingServer(this.servers[chunk[j]]));
         }
+        let results: number[] = await Promise.all(jobs);
         let copy: number[] = [];
         for (let j = 0; j < this.pings.length; j++) {
           copy.push(this.pings[j]);
         }
-        copy[i] = ms;
+        for (let j = 0; j < chunk.length; j++) {
+          copy[chunk[j]] = results[j];
+        }
         this.pings = copy;
-        this.status = '正在测速 ' + (i + 1).toString() + '/' + this.servers.length.toString() + '...';
+        done += chunk.length;
+        this.status = '正在测速 (TCP Ping) ' + done.toString() + '/' + targets.length.toString() + '...';
       }
-      this.status = '测速完成';
+      this.applyPingSort();
+      this.status = '测速完成，已按延迟排序';
     } finally {
       this.busy = false;
       this.testing = false;
@@ -671,6 +1278,72 @@ export class AppState {
 
   // ---------- connection ----------
 
+  async beginTrafficSession(): Promise<void> {
+    this.connectedAt = Date.now();
+    this.sessionRx = 0;
+    this.sessionTx = 0;
+    this.statsBaseRx = -1;
+    this.statsBaseTx = -1;
+    if (this.appUid < 0) {
+      return;
+    }
+    try {
+      this.statsBaseRx = await statistics.getUidRxBytes(this.appUid);
+      this.statsBaseTx = await statistics.getUidTxBytes(this.appUid);
+    } catch (e) {
+      console.error('read uid stats baseline failed: ' + JSON.stringify(e));
+    }
+  }
+
+  async refreshTrafficStats(): Promise<void> {
+    if (!this.connected || this.appUid < 0 || this.statsBaseRx < 0 || this.statsBaseTx < 0) {
+      return;
+    }
+    try {
+      let rx = await statistics.getUidRxBytes(this.appUid);
+      let tx = await statistics.getUidTxBytes(this.appUid);
+      this.sessionRx = rx - this.statsBaseRx;
+      this.sessionTx = tx - this.statsBaseTx;
+    } catch (e) {
+      console.error('read uid stats failed: ' + JSON.stringify(e));
+    }
+  }
+
+  endTrafficSession(): void {
+    this.connectedAt = 0;
+    this.sessionRx = 0;
+    this.sessionTx = 0;
+    this.statsBaseRx = -1;
+    this.statsBaseTx = -1;
+  }
+
+  connectedDurationText(): string {
+    if (this.connectedAt <= 0) {
+      return '';
+    }
+    let s = Math.floor((Date.now() - this.connectedAt) / 1000);
+    let hh = Math.floor(s / 3600);
+    let mm = Math.floor((s % 3600) / 60);
+    let ss = s % 60;
+    if (hh > 0) {
+      return hh.toString() + ':' + this.pad2(mm) + ':' + this.pad2(ss);
+    }
+    return this.pad2(mm) + ':' + this.pad2(ss);
+  }
+
+  trafficText(bytes: number): string {
+    if (bytes < 1024) {
+      return bytes.toString() + ' B';
+    }
+    if (bytes < 1024 * 1024) {
+      return (bytes / 1024).toFixed(1) + ' KB';
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+      return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+    }
+    return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+
   private routingOptions(): RoutingOptions {
     let r = new RoutingOptions();
     r.bypassCn = this.routeBypassCn;
@@ -702,10 +1375,16 @@ export class AppState {
     if (ok) {
       this.connected = true;
       this.status = '';
+      this.failoverSwitchCount = 0;
+      this.failoverCooldownUntil = 0;
+      this.startFailoverMonitor();
+      this.beginTrafficSession();
       this.refreshExitIp();
     } else {
       this.connected = false;
       this.ipBusy = false;
+      this.endTrafficSession();
+      this.stopFailoverMonitor();
       this.status = '连接失败，请重试';
     }
   }
@@ -714,8 +1393,11 @@ export class AppState {
     this.exitIp = '';
     this.ipError = '';
     this.ipBusy = false;
+    this.stopFailoverMonitor();
+    this.failoverSwitchCount = 0;
     vpnExtension.stopVpnExtensionAbility(VPN_WANT).then(() => {
       this.connected = false;
+      this.endTrafficSession();
       this.status = '已断开';
     }).catch((err: BusinessError) => {
       this.status = '断开失败: ' + JSON.stringify(err);
@@ -1139,6 +1821,43 @@ export class AppState {
     this.store.saveSelected(0);
     this.store.saveSubscriptionUrl('');
     this.status = '已清空本地节点与订阅';
+  }
+
+  // ---------- runtime logs ----------
+
+  appendRuntimeLog(line: string): void {
+    let t = new Date();
+    let stamp = this.pad2(t.getHours()) + ':' + this.pad2(t.getMinutes()) + ':' + this.pad2(t.getSeconds());
+    this.store.appendText(F_VPN_LOG, stamp + ' ' + line + '\n');
+  }
+
+  logText(kind: number): string {
+    let text = this.store.readText(kind === 1 ? F_XRAY_LOG : F_VPN_LOG);
+    if (text.length === 0) {
+      return '';
+    }
+    let lines = text.split('\n');
+    let out: string[] = [];
+    for (let i = lines.length - 1; i >= 0 && out.length < LOG_TAIL_LINES; i--) {
+      let l: string = lines[i];
+      if (l.trim().length > 0) {
+        out.push(l);
+      }
+    }
+    return out.join('\n');
+  }
+
+  logMetaText(kind: number): string {
+    let name = kind === 1 ? F_XRAY_LOG : F_VPN_LOG;
+    let size = this.store.sizeOf(name);
+    if (size <= 0) {
+      return '空';
+    }
+    return this.sizeText(size) + ' · 更新 ' + this.formatTime(this.store.mtimeOf(name));
+  }
+
+  clearLog(kind: number): void {
+    this.store.writeText(kind === 1 ? F_XRAY_LOG : F_VPN_LOG, '');
   }
 
   // ---------- misc ----------

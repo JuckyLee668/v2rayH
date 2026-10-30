@@ -5,6 +5,13 @@ import { buffer } from '@kit.ArkTS';
 import testNapi from 'libentry.so';
 
 const SELF_BUNDLE: string = 'com.xii.v2rayh';
+const LOG_ROTATE_MAX: number = 262144;
+const LOG_ROTATE_KEEP: number = 65536;
+
+class PerAppFile {
+  mode: string = 'all';
+  bundles: string[] = [];
+}
 
 export default class MyVpnExtAbility extends VpnExtensionAbility {
   private vpnConnection: vpnExtension.VpnConnection | undefined = undefined;
@@ -44,6 +51,39 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     }
   }
 
+  private rotateLog(): void {
+    if (this.logFile.length === 0) {
+      return;
+    }
+    try {
+      if (!fs.accessSync(this.logFile)) {
+        return;
+      }
+      let size: number = fs.statSync(this.logFile).size;
+      if (size <= LOG_ROTATE_MAX) {
+        return;
+      }
+      let keep: number = LOG_ROTATE_KEEP;
+      let start: number = size - keep;
+      if (start < 0) {
+        start = 0;
+        keep = size;
+      }
+      let f = fs.openSync(this.logFile, fs.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(keep);
+      let n: number = fs.readSync(f.fd, buf, { offset: start });
+      fs.closeSync(f);
+      let out = fs.openSync(this.logFile, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(out.fd, '=== 日志过大，已自动截断 ===\n');
+      if (n > 0) {
+        fs.writeSync(out.fd, buffer.from(buf.slice(0, n)).toString('utf-8'));
+      }
+      fs.closeSync(out);
+    } catch (e) {
+      console.error('rotateLog failed: ' + JSON.stringify(e));
+    }
+  }
+
   onCreate(want: Want): void {
     try {
       this.logFile = this.context.filesDir + '/vpn.log';
@@ -51,6 +91,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     } catch (e) {
       this.logFile = '';
     }
+    this.rotateLog();
     this.log('=== onCreate ===');
     this.setupVpn();
   }
@@ -65,6 +106,28 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
         this.log('vpn destroy failed: ' + JSON.stringify(err));
       });
     }
+  }
+
+  private readPerApp(): PerAppFile {
+    let p = new PerAppFile();
+    try {
+      let path = this.context.filesDir + '/perapp.json';
+      if (fs.accessSync(path)) {
+        let stat = fs.statSync(path);
+        if (stat.size > 0) {
+          let f = fs.openSync(path, fs.OpenMode.READ_ONLY);
+          let buf = new ArrayBuffer(stat.size);
+          fs.readSync(f.fd, buf);
+          fs.closeSync(f);
+          let parsed = JSON.parse(buffer.from(buf).toString('utf-8')) as PerAppFile;
+          p.mode = parsed.mode !== undefined ? parsed.mode : 'all';
+          p.bundles = parsed.bundles !== undefined ? parsed.bundles : [];
+        }
+      }
+    } catch (e) {
+      this.log('readPerApp failed: ' + JSON.stringify(e));
+    }
+    return p;
   }
 
   private setupVpn(): void {
@@ -103,9 +166,30 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
         isDefaultRoute: true
       }],
       dnsAddresses: ['8.8.8.8', '8.8.4.4'],
-      mtu: 1400,
-      blockedApplications: [SELF_BUNDLE]
+      mtu: 1400
     };
+
+    let perApp = this.readPerApp();
+    let bundles: string[] = [];
+    for (let i = 0; i < perApp.bundles.length; i++) {
+      let b = perApp.bundles[i];
+      if (b !== SELF_BUNDLE && bundles.indexOf(b) < 0) {
+        bundles.push(b);
+      }
+    }
+    if (perApp.mode === 'trust' && bundles.length > 0) {
+      config.trustedApplications = bundles;
+      this.log('per-app trust mode, apps=' + bundles.length.toString());
+    } else {
+      let blocked: string[] = [SELF_BUNDLE];
+      if (perApp.mode === 'block') {
+        for (let i = 0; i < bundles.length; i++) {
+          blocked.push(bundles[i]);
+        }
+      }
+      config.blockedApplications = blocked;
+      this.log('per-app block mode, blocked=' + blocked.length.toString());
+    }
 
     this.log('calling create(config)');
     this.vpnConnection.create(config).then((fd: number) => {

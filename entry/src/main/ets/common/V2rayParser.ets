@@ -32,6 +32,78 @@ function b64Decode(input: string): string {
   }
 }
 
+function b64Encode(input: string): string {
+  return buffer.from(input, 'utf-8').toString('base64');
+}
+
+function defaultNodeName(s: ServerConfig): string {
+  return s.name.length > 0 ? s.name : (s.address + ':' + s.port.toString());
+}
+
+function appendParam(q: string[], key: string, val: string): void {
+  if (val.length > 0) {
+    q.push(key + '=' + encodeURIComponent(val));
+  }
+}
+
+export function buildShareLink(s: ServerConfig): string {
+  if (s.protocol === 'vless') {
+    let q: string[] = [];
+    q.push('security=' + (s.security.length > 0 ? s.security : 'none'));
+    q.push('encryption=none');
+    appendParam(q, 'flow', s.flow);
+    appendParam(q, 'sni', s.sni);
+    appendParam(q, 'fp', s.fp);
+    appendParam(q, 'pbk', s.pbk);
+    appendParam(q, 'sid', s.sid);
+    if (s.spx.length > 0 && s.spx !== '/') {
+      appendParam(q, 'spx', s.spx);
+    }
+    appendParam(q, 'type', s.network.length > 0 ? s.network : 'tcp');
+    if (s.headerType.length > 0 && s.headerType !== 'none') {
+      appendParam(q, 'headerType', s.headerType);
+    }
+    appendParam(q, 'path', s.path);
+    appendParam(q, 'host', s.host);
+    return 'vless://' + s.uuid + '@' + s.address + ':' + s.port.toString()
+      + '?' + q.join('&') + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'vmess') {
+    let v: VmessJson = {};
+    v.ps = defaultNodeName(s);
+    v.add = s.address;
+    v.port = s.port.toString();
+    v.id = s.uuid;
+    v.aid = s.alterId.toString();
+    v.scy = 'auto';
+    v.net = s.network.length > 0 ? s.network : 'tcp';
+    v.type = s.headerType.length > 0 ? s.headerType : 'none';
+    v.host = s.host;
+    v.path = s.path;
+    v.tls = s.security === 'tls' ? 'tls' : '';
+    v.sni = s.sni;
+    v.fp = s.fp;
+    return 'vmess://' + b64Encode(JSON.stringify(v));
+  }
+  if (s.protocol === 'trojan') {
+    let q: string[] = [];
+    q.push('security=' + (s.security.length > 0 ? s.security : 'tls'));
+    appendParam(q, 'sni', s.sni);
+    appendParam(q, 'fp', s.fp);
+    appendParam(q, 'type', s.network.length > 0 && s.network !== 'tcp' ? s.network : '');
+    appendParam(q, 'path', s.path);
+    appendParam(q, 'host', s.host);
+    return 'trojan://' + encodeURIComponent(s.password) + '@' + s.address + ':' + s.port.toString()
+      + '?' + q.join('&') + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'shadowsocks') {
+    let method = s.method.length > 0 ? s.method : 'aes-128-gcm';
+    return 'ss://' + b64Encode(method + ':' + s.password)
+      + '@' + s.address + ':' + s.port.toString() + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  return '';
+}
+
 function getParam(query: string, key: string): string {
   if (query.length === 0) {
     return '';
