@@ -61,6 +61,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The HAP is built unsigned on CI; a locally configured signingConfig
+      # (Windows material paths) breaks SignHap with 00303107. Local signing
+      # must stay out of the repo via:
+      #   git update-index --skip-worktree build-profile.json5
+      - name: Guard against committed signing config
+        shell: bash
+        run: |
+          if grep -n "signingConfig" build-profile.json5; then
+            echo "::error::build-profile.json5 must stay signing-free (CI builds unsigned). Keep local signing out via 'git update-index --skip-worktree build-profile.json5'."
+            exit 1
+          fi
+
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
