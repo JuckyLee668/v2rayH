@@ -1108,7 +1108,8 @@ export struct ConfigTab {
               }
               .backgroundColor(AppTheme.CARD_BG)
               .borderRadius(14)
-            }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|' + item.address)
+            }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|'
+              + item.address + '|' + (item.kernel !== undefined && item.kernel.length > 0 ? item.kernel : 'auto'))
           }
           .width('100%')
           .layoutWeight(1)

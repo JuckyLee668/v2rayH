@@ -458,7 +458,8 @@ export struct HomeTab {
                 .onClick(() => {
                   this.app.selectServer(idx);
                 })
-              }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|' + item.address)
+              }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|'
+                + item.address + '|' + (item.kernel !== undefined && item.kernel.length > 0 ? item.kernel : 'auto'))
             }
             .width('100%')
             .layoutWeight(1)

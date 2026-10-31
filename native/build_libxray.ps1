@@ -43,7 +43,9 @@ if (-not (Test-Path $ArExe)) {
 }
 
 # 3. 交叉编译 libxray.a
-Write-Host "[3/4] 交叉编译 libxray.a (openharmony/arm64, c-archive) ..."
+# with_utls: sing-box 的 reality/utls 实现被该 build tag 门控，缺失会导致
+#            "uTLS, which is required by reality is not included in this build"
+Write-Host "[3/4] 交叉编译 libxray.a (openharmony/arm64, c-archive, with_utls) ..."
 $env:OHOS_SDK = $OHOS_SDK
 $env:GOOS = "openharmony"
 $env:GOARCH = "arm64"
@@ -55,7 +57,7 @@ $env:PATH = "$ToolsDir;$env:PATH"
 
 Push-Location $LibDir
 try {
-    & $OhosGo build -buildmode=c-archive -o "libxray.a" .
+    & $OhosGo build -tags with_utls -buildmode=c-archive -o "libxray.a" .
     if ($LASTEXITCODE -ne 0) { throw "go build 失败" }
 }
 finally {

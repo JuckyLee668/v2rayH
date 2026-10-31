@@ -51,14 +51,16 @@ if [ ! -x "$AR_BIN" ]; then
 fi
 
 # 3. cross-compile libxray.a
-echo "[3/4] cross-compiling libxray.a (openharmony/arm64, c-archive)"
+# with_utls: sing-box gates its reality/utls implementation behind this build tag;
+#            without it reality outboards fail with "uTLS ... not included in this build".
+echo "[3/4] cross-compiling libxray.a (openharmony/arm64, c-archive, with_utls)"
 (
   cd "$LIB_DIR"
   OHOS_SDK="$OHOS_SDK" \
   GOOS=openharmony GOARCH=arm64 CGO_ENABLED=1 \
   CC="$CCWRAP_BIN" CGO_CFLAGS="" CGO_LDFLAGS="" \
   PATH="$AR_DIR:$PATH" \
-  "$OHOS_GO_BIN" build -buildmode=c-archive -o libxray.a .
+  "$OHOS_GO_BIN" build -tags with_utls -buildmode=c-archive -o libxray.a .
 )
 
 # 4. copy into the app

@@ -322,6 +322,23 @@ export class AppState {
     AppStorage.setOrCreate('themeRev', (rev === undefined ? 0 : rev) + 1);
   }
 
+  private applyColorMode(): void {
+    if (this.ctx === undefined) {
+      return;
+    }
+    let cm: ConfigurationConstant.ColorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
+    if (this.darkMode === 2) {
+      cm = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    } else if (this.darkMode === 1) {
+      cm = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+    }
+    try {
+      this.ctx.getApplicationContext().setColorMode(cm);
+    } catch (e) {
+      console.error('setColorMode failed: ' + JSON.stringify(e));
+    }
+  }
+
   private loadAppearance(): void {
     let text = this.store.readText(F_APPEARANCE);
     if (text.length > 0) {
@@ -334,6 +351,7 @@ export class AppState {
       }
     }
     this.applyAppearance();
+    this.applyColorMode();
   }
 
   private saveAppearance(): void {
@@ -347,19 +365,7 @@ export class AppState {
     this.darkMode = mode;
     this.applyAppearance();
     this.saveAppearance();
-    if (this.ctx !== undefined) {
-      let cm: ConfigurationConstant.ColorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET;
-      if (mode === 2) {
-        cm = ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
-      } else if (mode === 1) {
-        cm = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
-      }
-      try {
-        this.ctx.getApplicationContext().setColorMode(cm);
-      } catch (e) {
-        console.error('setColorMode failed: ' + JSON.stringify(e));
-      }
-    }
+    this.applyColorMode();
   }
 
   setAccent(idx: number): void {
