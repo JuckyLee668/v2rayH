@@ -113,6 +113,10 @@ export class AppState {
   servers: ServerConfig[] = [];
   selected: number = 0;
   multiKeys: string[] = [];
+  // 系统返回键导航深度（由各 Tab 同步，Index.onBackPress 读取）
+  homeDepth: number = 0;
+  configDepth: number = 0;
+  settingsDepth: number = 0;
   status: string = '';
   subUrl: string = '';
   busy: boolean = false;
@@ -449,7 +453,7 @@ export class AppState {
     s.headerType = raw.headerType !== undefined ? raw.headerType : 'none';
     s.path = raw.path !== undefined ? raw.path : '';
     s.host = raw.host !== undefined ? raw.host : '';
-    s.kernel = raw.kernel !== undefined && raw.kernel.length > 0 ? raw.kernel : 'auto';
+    s.kernel = typeof raw.kernel === 'string' && raw.kernel.length > 0 ? raw.kernel : 'auto';
     s.obfs = raw.obfs !== undefined ? raw.obfs : '';
     s.obfsPassword = raw.obfsPassword !== undefined ? raw.obfsPassword : '';
     s.insecure = raw.insecure === true;

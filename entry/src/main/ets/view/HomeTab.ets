@@ -10,8 +10,19 @@ export struct HomeTab {
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @State statsTick: number = 0;
-  @State panelOpen: boolean = false;
+  @State @Watch('syncNavDepth') panelOpen: boolean = false;
+  @Prop @Watch('onBackTick') backTick: number = 0;
   private timerId: number = -1;
+
+  syncNavDepth(): void {
+    this.app.homeDepth = this.panelOpen ? 1 : 0;
+  }
+
+  onBackTick(): void {
+    if (this.panelOpen) {
+      this.panelOpen = false;
+    }
+  }
 
   aboutToAppear(): void {
     this.app.sortPromptHandler = (mode: string): void => {
@@ -459,7 +470,7 @@ export struct HomeTab {
                   this.app.selectServer(idx);
                 })
               }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|'
-                + item.address + '|' + (item.kernel !== undefined && item.kernel.length > 0 ? item.kernel : 'auto'))
+                + item.address + '|' + (typeof item.kernel === 'string' && item.kernel.length > 0 ? item.kernel : 'auto'))
             }
             .width('100%')
             .layoutWeight(1)

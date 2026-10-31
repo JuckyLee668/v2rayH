@@ -24,20 +24,21 @@ export struct ConfigTab {
   @ObjectLink app: AppState;
   @StorageProp('themeRev') themeRev: number = 0;
   @Prop @Watch('onResetTick') resetTick: number = 0;
+  @Prop @Watch('onBackTick') backTick: number = 0;
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
-  @State sub: number = SUB_OVERVIEW;
+  @State @Watch('syncNavDepth') sub: number = SUB_OVERVIEW;
   @State groupUrlDraft: string = '';
   @State groupNameDraft: string = '';
   @State showShare: boolean = false;
   @State shareText: string = '';
   @State shareTitle: string = '分享订阅';
   @State nodeGroupIdx: number = -1;
-  @State groupCreateOpen: boolean = false;
-  @State groupEditIdx: number = -1;
+  @State @Watch('syncNavDepth') groupCreateOpen: boolean = false;
+  @State @Watch('syncNavDepth') groupEditIdx: number = -1;
   @State geName: string = '';
   @State geUrl: string = '';
-  @State editIdx: number = -1;
+  @State @Watch('syncNavDepth') editIdx: number = -1;
   @State eName: string = '';
   @State eAddress: string = '';
   @State ePort: string = '';
@@ -60,6 +61,11 @@ export struct ConfigTab {
   @State mPbk: string = '';
   @State mSid: string = '';
   @State mFp: string = 'chrome';
+  @State mPassword2: string = '';
+  @State mAlpn: string = '';
+  @State mObfs: string = '';
+  @State mPorts: string = '';
+  @State mInsecure: boolean = false;
   @State perAppDraft: string = '';
 
 
@@ -87,6 +93,41 @@ export struct ConfigTab {
 
   onResetTick(): void {
     this.sub = SUB_OVERVIEW;
+  }
+
+  syncNavDepth(): void {
+    let d = 0;
+    if (this.sub === SUB_NODES) {
+      d = 2;
+    } else if (this.sub !== SUB_OVERVIEW) {
+      d = 1;
+    }
+    if (this.editIdx >= 0 || this.groupCreateOpen || this.groupEditIdx >= 0) {
+      d += 1;
+    }
+    this.app.configDepth = d;
+  }
+
+  onBackTick(): void {
+    if (this.editIdx >= 0) {
+      this.editIdx = -1;
+      return;
+    }
+    if (this.groupEditIdx >= 0) {
+      this.groupEditIdx = -1;
+      return;
+    }
+    if (this.groupCreateOpen) {
+      this.groupCreateOpen = false;
+      return;
+    }
+    if (this.sub === SUB_NODES) {
+      this.sub = SUB_GROUPS;
+      return;
+    }
+    if (this.sub !== SUB_OVERVIEW) {
+      this.sub = SUB_OVERVIEW;
+    }
   }
 
   private subDesc(): string {
@@ -706,7 +747,7 @@ export struct ConfigTab {
       this.showShare = true;
       return;
     }
-    let nodes: ServerConfig[] = g.nodes !== undefined ? g.nodes : [];
+    let nodes: ServerConfig[] = Array.isArray(g.nodes) ? g.nodes : [];
     let links: string[] = [];
     for (let i = 0; i < nodes.length; i++) {
       let link = buildShareLink(nodes[i]);
@@ -731,7 +772,7 @@ export struct ConfigTab {
   // ---------------- group nodes management ----------------
 
   private openGroupNodes(idx: number): void {
-    if (idx < 0 || idx >= this.app.groups.length) {
+    if (!Array.isArray(this.app.groups) || idx < 0 || idx >= this.app.groups.length) {
       return;
     }
     this.nodeGroupIdx = idx;
@@ -740,15 +781,20 @@ export struct ConfigTab {
   }
 
   private nodeGroup(): SubGroup | undefined {
-    if (this.nodeGroupIdx < 0 || this.nodeGroupIdx >= this.app.groups.length) {
+    let groups: SubGroup[] | undefined = this.app.groups;
+    if (!Array.isArray(groups) || this.nodeGroupIdx < 0 || this.nodeGroupIdx >= groups.length) {
       return undefined;
     }
-    return this.app.groups[this.nodeGroupIdx];
+    return groups[this.nodeGroupIdx];
   }
 
   private groupNodes(): ServerConfig[] {
     let g = this.nodeGroup();
-    return g !== undefined && g.nodes !== undefined ? g.nodes : [];
+    if (g === undefined) {
+      return [];
+    }
+    let nodes: ServerConfig[] | undefined = g.nodes;
+    return Array.isArray(nodes) ? nodes : [];
   }
 
   private nodeGroupTitle(): string {
@@ -756,7 +802,7 @@ export struct ConfigTab {
     if (g === undefined) {
       return '分组不存在';
     }
-    let nodes = g.nodes !== undefined ? g.nodes : [];
+    let nodes = Array.isArray(g.nodes) ? g.nodes : [];
     return '「' + g.name + '」· ' + nodes.length.toString() + ' 个节点';
   }
 
@@ -766,11 +812,19 @@ export struct ConfigTab {
       return;
     }
     let s: ServerConfig = nodes[idx];
-    this.eName = s.name;
-    this.eAddress = s.address;
-    this.ePort = s.port.toString();
-    this.eCredential = s.protocol === 'vless' || s.protocol === 'vmess' ? s.uuid : s.password;
-    this.eKernel = s.kernel !== undefined && s.kernel.length > 0 ? s.kernel : 'auto';
+    let name: string | undefined = s.name;
+    let address: string | undefined = s.address;
+    let port: number | undefined = s.port;
+    let kernel: string | undefined = s.kernel;
+    let uuid: string | undefined = s.uuid;
+    let password: string | undefined = s.password;
+    this.eName = typeof name === 'string' ? name : '';
+    this.eAddress = typeof address === 'string' ? address : '';
+    this.ePort = typeof port === 'number' ? port.toString() : '0';
+    this.eCredential = s.protocol === 'vless' || s.protocol === 'vmess'
+      ? (typeof uuid === 'string' ? uuid : '')
+      : (typeof password === 'string' ? password : '');
+    this.eKernel = typeof kernel === 'string' && kernel.length > 0 ? kernel : 'auto';
     this.editIdx = idx;
   }
 
@@ -1109,7 +1163,7 @@ export struct ConfigTab {
               .backgroundColor(AppTheme.CARD_BG)
               .borderRadius(14)
             }, (item: ServerConfig, idx: number) => idx.toString() + '|' + item.name + '|'
-              + item.address + '|' + (item.kernel !== undefined && item.kernel.length > 0 ? item.kernel : 'auto'))
+              + item.address + '|' + (typeof item.kernel === 'string' && item.kernel.length > 0 ? item.kernel : 'auto'))
           }
           .width('100%')
           .layoutWeight(1)
@@ -1136,7 +1190,11 @@ export struct ConfigTab {
 
 
   private isUuidProtocol(): boolean {
-    return this.mProtocol === 'vless' || this.mProtocol === 'vmess';
+    return this.mProtocol === 'vless' || this.mProtocol === 'vmess' || this.mProtocol === 'tuic';
+  }
+
+  private isSingboxProtocol(): boolean {
+    return this.mProtocol === 'hy2' || this.mProtocol === 'tuic';
   }
 
   private buildManualServer(): ServerConfig | undefined {
@@ -1157,6 +1215,22 @@ export struct ConfigTab {
     }
     if (this.mProtocol === 'shadowsocks') {
       s.method = this.mMethod.trim().length > 0 ? this.mMethod.trim() : 'aes-128-gcm';
+    }
+    if (this.isSingboxProtocol()) {
+      s.security = 'tls';
+      s.sni = this.mSni.trim();
+      s.alpn = this.mAlpn.trim();
+      s.insecure = this.mInsecure;
+      if (this.mProtocol === 'hy2') {
+        if (this.mObfs.trim().length > 0) {
+          s.obfs = 'salamander';
+          s.obfsPassword = this.mObfs.trim();
+        }
+        s.ports = this.mPorts.trim();
+      } else {
+        s.password = this.mPassword2.trim();
+      }
+      return s;
     }
     s.network = this.mNetwork;
     s.path = this.mPath.trim();
@@ -1204,7 +1278,7 @@ export struct ConfigTab {
             .fontWeight(FontWeight.Medium)
             .fontColor(AppTheme.TEXT)
             .width('100%')
-          Text('粘贴 vless / vmess / trojan / ss 分享链接，自动解析全部参数，支持一次多个')
+          Text('粘贴 vless / vmess / trojan / ss / hy2 / tuic 分享链接，自动解析全部参数，支持一次多个')
             .fontSize(11)
             .fontColor(AppTheme.TEXT_WEAK)
             .width('100%')
@@ -1271,9 +1345,22 @@ export struct ConfigTab {
               CfgChoiceChip({ label: 'Shadowsocks', active: this.mProtocol === 'shadowsocks', onPick: () => {
                 this.mProtocol = 'shadowsocks';
               } })
+              CfgChoiceChip({ label: 'Hysteria2', active: this.mProtocol === 'hy2', onPick: () => {
+                this.mProtocol = 'hy2';
+              } })
+              CfgChoiceChip({ label: 'TUIC', active: this.mProtocol === 'tuic', onPick: () => {
+                this.mProtocol = 'tuic';
+              } })
             }
             .width('100%')
             .margin({ top: 4 })
+            if (this.isSingboxProtocol()) {
+              Text('hy2 / tuic 由 sing-box 内核承载，TLS 为协议内置，无需单独配置')
+                .fontSize(11)
+                .fontColor(AppTheme.TEXT_WEAK)
+                .width('100%')
+                .margin({ top: 6 })
+            }
 
             CfgField({ label: '备注名称', value: this.mName, placeholder: '例如 香港01', onEdit: (v: string) => {
               this.mName = v;
@@ -1293,12 +1380,66 @@ export struct ConfigTab {
               }
             })
 
+            if (this.mProtocol === 'tuic') {
+              CfgField({ label: '密码', value: this.mPassword2, placeholder: 'TUIC 密码', onEdit: (v: string) => {
+                this.mPassword2 = v;
+              } })
+            }
+
             if (this.mProtocol === 'shadowsocks') {
               CfgField({ label: '加密方式', value: this.mMethod, placeholder: 'aes-128-gcm / chacha20-ietf-poly1305', onEdit: (v: string) => {
                 this.mMethod = v;
               } })
             }
 
+            if (this.isSingboxProtocol()) {
+              CfgField({ label: 'SNI', value: this.mSni, placeholder: '例如 www.example.com', onEdit: (v: string) => {
+                this.mSni = v;
+              } })
+              CfgField({
+                label: 'ALPN',
+                value: this.mAlpn,
+                placeholder: this.mProtocol === 'tuic' ? 'h3（默认）' : 'h3 / http1.1，可留空',
+                onEdit: (v: string) => {
+                  this.mAlpn = v;
+                }
+              })
+              if (this.mProtocol === 'hy2') {
+                CfgField({
+                  label: '混淆密码 (obfs)',
+                  value: this.mObfs,
+                  placeholder: 'salamander 混淆密码，可留空',
+                  onEdit: (v: string) => {
+                    this.mObfs = v;
+                  }
+                })
+                CfgField({
+                  label: '端口跳跃',
+                  value: this.mPorts,
+                  placeholder: '例如 20000-30000，可留空',
+                  onEdit: (v: string) => {
+                    this.mPorts = v;
+                  }
+                })
+              }
+              Text('跳过证书验证 (insecure)')
+                .fontSize(12)
+                .fontColor(AppTheme.TEXT_SUB)
+                .width('100%')
+                .margin({ top: 14 })
+              Flex({ wrap: FlexWrap.Wrap }) {
+                CfgChoiceChip({ label: '关闭', active: !this.mInsecure, onPick: () => {
+                  this.mInsecure = false;
+                } })
+                CfgChoiceChip({ label: '开启', active: this.mInsecure, onPick: () => {
+                  this.mInsecure = true;
+                } })
+              }
+              .width('100%')
+              .margin({ top: 4 })
+            }
+
+            if (!this.isSingboxProtocol()) {
             Text('传输方式')
               .fontSize(12)
               .fontColor(AppTheme.TEXT_SUB)
@@ -1358,6 +1499,7 @@ export struct ConfigTab {
               CfgField({ label: '指纹 (fp)', value: this.mFp, placeholder: 'chrome', onEdit: (v: string) => {
                 this.mFp = v;
               } })
+            }
             }
 
             Button('保存到「' + this.app.activeGroupName() + '」')

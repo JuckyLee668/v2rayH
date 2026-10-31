@@ -11,6 +11,9 @@ struct Index {
   @State currentIndex: number = 0;
   @State configReset: number = 0;
   @State settingsReset: number = 0;
+  @State homeBackTick: number = 0;
+  @State configBackTick: number = 0;
+  @State settingsBackTick: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @StorageProp('systemDarkFlag') @Watch('onSystemDark') systemDarkFlag: boolean = false;
   @StorageProp('theme.pageBg') themedPageBg: string = '#f2f2f7';
@@ -31,6 +34,22 @@ struct Index {
     } else if (index === 2) {
       this.settingsReset = this.settingsReset + 1;
     }
+  }
+
+  onBackPress(): boolean {
+    if (this.currentIndex === 0 && this.app.homeDepth > 0) {
+      this.homeBackTick = this.homeBackTick + 1;
+      return true;
+    }
+    if (this.currentIndex === 1 && this.app.configDepth > 0) {
+      this.configBackTick = this.configBackTick + 1;
+      return true;
+    }
+    if (this.currentIndex === 2 && this.app.settingsDepth > 0) {
+      this.settingsBackTick = this.settingsBackTick + 1;
+      return true;
+    }
+    return false;
   }
 
   aboutToAppear(): void {
@@ -62,17 +81,17 @@ struct Index {
     Column() {
       HdsTabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
         TabContent() {
-          HomeTab({ app: this.app })
+          HomeTab({ app: this.app, backTick: this.homeBackTick })
         }
         .tabBar(this.tabItem('主页', $r('sys.symbol.house'), 0))
 
         TabContent() {
-          ConfigTab({ app: this.app, resetTick: this.configReset })
+          ConfigTab({ app: this.app, resetTick: this.configReset, backTick: this.configBackTick })
         }
         .tabBar(this.tabItem('配置', $r('sys.symbol.slider_horizontal_2'), 1))
 
         TabContent() {
-          SettingsTab({ app: this.app, resetTick: this.settingsReset })
+          SettingsTab({ app: this.app, resetTick: this.settingsReset, backTick: this.settingsBackTick })
         }
         .tabBar(this.tabItem('设置', $r('sys.symbol.gearshape'), 2))
       }

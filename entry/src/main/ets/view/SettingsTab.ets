@@ -13,9 +13,10 @@ export struct SettingsTab {
   @ObjectLink app: AppState;
   @StorageProp('themeRev') themeRev: number = 0;
   @Prop @Watch('onResetTick') resetTick: number = 0;
+  @Prop @Watch('onBackTick') backTick: number = 0;
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
-  @State sub: number = SET_NAV;
+  @State @Watch('syncNavDepth') sub: number = SET_NAV;
   @State logKind: number = 0;
   @State logContent: string[] = [];
 
@@ -26,6 +27,16 @@ export struct SettingsTab {
 
   onResetTick(): void {
     this.sub = SET_NAV;
+  }
+
+  syncNavDepth(): void {
+    this.app.settingsDepth = this.sub !== SET_NAV ? 1 : 0;
+  }
+
+  onBackTick(): void {
+    if (this.sub !== SET_NAV) {
+      this.sub = SET_NAV;
+    }
   }
 
   private subTitle(): string {
