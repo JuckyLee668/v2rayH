@@ -115,6 +115,10 @@ if err := unix.Fstat(fd, &stat); err != nil {
 
 > 设备日志里还能翻到打补丁之前那条 `code=1`，正好是这条补丁属于「承重」而非装饰的证据。
 
+> **已废弃**：xray-core v26.10.29 起 tun 代理不再使用 gVisor（换成自研轻量 TCP/IP 栈），
+> 本仓库也随之删除了 vendored gvisor 和这条补丁。新栈通过 `os.NewFile` 读 tun fd，
+> 从不 `fstat`，天然不受此限制。
+
 ---
 
 ## 8. 必须匿名导入 distro/all

@@ -80,6 +80,20 @@ class PingSortEntry {
   }
 }
 
+class SpeedSortEntry {
+  rank: number = 0;
+  speed: number = 0;
+  oldIdx: number = 0;
+  server: ServerConfig = new ServerConfig();
+
+  constructor(rank: number, speed: number, oldIdx: number, server: ServerConfig) {
+    this.rank = rank;
+    this.speed = speed;
+    this.oldIdx = oldIdx;
+    this.server = server;
+  }
+}
+
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise<void>((resolve: (value: void) => void) => {
@@ -102,12 +116,11 @@ export class AppState {
   testing: boolean = false;
   connected: boolean = false;
   pings: number[] = [];
+  speeds: number[] = [];
   downloadTesting: boolean = false;
-  downloadBps: number = 0;
-  downloadNodeKey: string = '';
-  downloadError: string = '';
+  sortPromptHandler: ((mode: string) => void) | null = null;
   coreVersion: string = '';
-  appVersion: string = '0.3.0';
+  appVersion: string = '0.2.5';
   exitIp: string = '';
   ipBusy: boolean = false;
   ipError: string = '';
@@ -505,6 +518,7 @@ export class AppState {
       this.subUrl = '';
       this.selected = 0;
       this.pings = [];
+      this.speeds = [];
     }
     this.status = '已删除分组';
   }
@@ -520,6 +534,7 @@ export class AppState {
     this.subUrl = g.url !== undefined ? g.url : '';
     this.selected = 0;
     this.pings = [];
+    this.speeds = [];
     this.store.saveSelected(0);
   }
 
@@ -641,22 +656,30 @@ export class AppState {
     return this.serverKeyOf(this.servers[idx]);
   }
 
-  downloadMbps(): number {
-    return this.downloadBps * 8 / 1000000;
+  downloadTargetsCount(): number {
+    let n: number = this.multiCount();
+    return n > 0 ? n : this.servers.length;
   }
 
-  downloadResultText(): string {
-    if (this.downloadNodeKey.length === 0 || this.downloadNodeKey !== this.nodeKey(this.selected)) {
+  speedText(idx: number): string {
+    if (idx >= this.speeds.length) {
       return '';
     }
-    if (this.downloadError.length > 0) {
-      return this.downloadError;
+    let s: number = this.speeds[idx];
+    if (s === -2) {
+      return '测速中';
     }
-    if (this.downloadBps <= 0) {
+    if (s === -3) {
       return '';
     }
-    let mbs: number = this.downloadBps / 1024 / 1024;
-    return '下载 ' + this.downloadMbps().toFixed(2) + ' Mbps · ' + mbs.toFixed(2) + ' MB/s';
+    if (s === -1) {
+      return '失败';
+    }
+    return (s * 8 / 1000000).toFixed(2) + ' Mbps';
+  }
+
+  speedFailed(idx: number): boolean {
+    return idx < this.speeds.length && this.speeds[idx] === -1;
   }
 
   selectServer(idx: number, manual: boolean = true): void {
@@ -701,6 +724,7 @@ export class AppState {
         this.store.saveSelected(this.selected);
       }
       this.pings = [];
+      this.speeds = [];
     }
   }
 
@@ -912,6 +936,7 @@ export class AppState {
       this.selected = keep;
       this.store.saveSelected(keep);
       this.pings = [];
+      this.speeds = [];
       if (this.connected) {
         this.busy = false;
         await this.switchNode();
@@ -1144,16 +1169,70 @@ export class AppState {
     });
     let nextServers: ServerConfig[] = [];
     let nextPings: number[] = [];
+    let nextSpeeds: number[] = [];
     for (let i = 0; i < entries.length; i++) {
+      let old = entries[i].oldIdx;
       nextServers.push(entries[i].server);
-      nextPings.push(entries[i].ping);
+      nextPings.push(old < this.pings.length ? this.pings[old] : -3);
+      nextSpeeds.push(old < this.speeds.length ? this.speeds[old] : -3);
     }
-    this.commitSortedNodes(nextServers, nextPings, selectedKey);
+    this.commitSortedNodes(nextServers, nextPings, nextSpeeds, selectedKey);
   }
 
-  private commitSortedNodes(nodes: ServerConfig[], pings: number[], selectedKey: string): void {
+  sortByPing(): void {
+    this.applyPingSort();
+    this.status = '已按延迟从低到高排序';
+  }
+
+  private applySpeedSort(): void {
+    if (this.servers.length < 2) {
+      return;
+    }
+    let selectedKey = this.nodeKey(this.selected);
+    let entries: SpeedSortEntry[] = [];
+    for (let i = 0; i < this.servers.length; i++) {
+      let speed = -3;
+      if (i < this.speeds.length) {
+        speed = this.speeds[i];
+      }
+      let rank = 1;
+      if (speed > 0) {
+        rank = 0;
+      } else if (speed === -1) {
+        rank = 2;
+      }
+      entries.push(new SpeedSortEntry(rank, speed, i, this.servers[i]));
+    }
+    entries.sort((a: SpeedSortEntry, b: SpeedSortEntry): number => {
+      if (a.rank !== b.rank) {
+        return a.rank - b.rank;
+      }
+      if (a.rank === 0 && a.speed !== b.speed) {
+        return b.speed - a.speed;
+      }
+      return a.oldIdx - b.oldIdx;
+    });
+    let nextServers: ServerConfig[] = [];
+    let nextPings: number[] = [];
+    let nextSpeeds: number[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      let old = entries[i].oldIdx;
+      nextServers.push(entries[i].server);
+      nextPings.push(old < this.pings.length ? this.pings[old] : -3);
+      nextSpeeds.push(old < this.speeds.length ? this.speeds[old] : -3);
+    }
+    this.commitSortedNodes(nextServers, nextPings, nextSpeeds, selectedKey);
+  }
+
+  sortBySpeed(): void {
+    this.applySpeedSort();
+    this.status = '已按速率从高到低排序';
+  }
+
+  private commitSortedNodes(nodes: ServerConfig[], pings: number[], speeds: number[], selectedKey: string): void {
     this.servers = nodes;
     this.pings = pings;
+    this.speeds = speeds;
     if (this.activeGroup >= 0 && this.activeGroup < this.groups.length) {
       let next: SubGroup[] = [];
       for (let i = 0; i < this.groups.length; i++) {
@@ -1203,7 +1282,7 @@ export class AppState {
     this.pings = init;
     this.busy = true;
     this.testing = true;
-    this.status = '正在 TCP Ping 测速...';
+    this.status = '正在测延迟...';
     try {
       let done = 0;
       for (let c = 0; c < targets.length; c += PING_CONCURRENCY) {
@@ -1222,13 +1301,15 @@ export class AppState {
         }
         this.pings = copy;
         done += chunk.length;
-        this.status = '正在测速 (TCP Ping) ' + done.toString() + '/' + targets.length.toString() + '...';
+        this.status = '正在测延迟 ' + done.toString() + '/' + targets.length.toString() + '...';
       }
-      this.applyPingSort();
-      this.status = '测速完成，已按延迟排序';
+      this.status = '测延迟完成';
     } finally {
       this.busy = false;
       this.testing = false;
+    }
+    if (this.servers.length > 1 && this.sortPromptHandler !== null) {
+      this.sortPromptHandler('ping');
     }
   }
 
@@ -1236,43 +1317,61 @@ export class AppState {
     if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
       return;
     }
-    let srv: ServerConfig | undefined = this.currentNode();
-    if (srv === undefined) {
-      return;
+    let targets: number[] = this.multiIndices();
+    if (targets.length === 0) {
+      for (let i = 0; i < this.servers.length; i++) {
+        targets.push(i);
+      }
     }
+    let init: number[] = [];
+    for (let i = 0; i < this.servers.length; i++) {
+      init.push(i < this.speeds.length ? this.speeds[i] : -3);
+    }
+    for (let i = 0; i < targets.length; i++) {
+      init[targets[i]] = -2;
+    }
+    this.speeds = init;
     this.downloadTesting = true;
-    this.downloadBps = 0;
-    this.downloadError = '';
-    this.downloadNodeKey = this.nodeKey(this.selected);
     this.busy = true;
-    this.status = '正在下载测速: ' + srv.name;
+    let ok = 0;
     try {
-      let cfg: string = buildTestConfig(srv);
-      let bps: number = -1;
-      let urls: string[] = [
-        'http://speed.cloudflare.com/__down?bytes=20000000',
-        'http://cachefly.cachefly.net/10mb.test'
-      ];
-      for (let i = 0; i < urls.length; i++) {
-        try {
-          bps = await testNapi.measureDownload(cfg, urls[i], 20 * 1024 * 1024);
-        } catch (e) {
-          bps = -1;
+      for (let c = 0; c < targets.length; c++) {
+        let idx = targets[c];
+        let srv = this.servers[idx];
+        this.status = '正在测下载 (' + (c + 1).toString() + '/' + targets.length.toString() + '): ' + srv.name;
+        let cfg: string = buildTestConfig(srv);
+        let bps: number = -1;
+        let urls: string[] = [
+          'http://speed.cloudflare.com/__down?bytes=100000000',
+          'http://cachefly.cachefly.net/10mb.test'
+        ];
+        for (let i = 0; i < urls.length; i++) {
+          try {
+            bps = await testNapi.measureDownload(cfg, urls[i], 100 * 1024 * 1024);
+          } catch (e) {
+            bps = -1;
+          }
+          if (bps > 0) {
+            break;
+          }
         }
+        let copy: number[] = [];
+        for (let j = 0; j < this.speeds.length; j++) {
+          copy.push(this.speeds[j]);
+        }
+        copy[idx] = bps > 0 ? bps : -1;
+        this.speeds = copy;
         if (bps > 0) {
-          break;
+          ok++;
         }
       }
-      if (bps > 0) {
-        this.downloadBps = bps;
-        this.status = '下载测速完成';
-      } else {
-        this.downloadError = '下载测速失败，请检查节点';
-        this.status = this.downloadError;
-      }
+      this.status = '测下载完成: ' + ok.toString() + '/' + targets.length.toString() + ' 个节点成功';
     } finally {
       this.downloadTesting = false;
       this.busy = false;
+    }
+    if (this.servers.length > 1 && this.sortPromptHandler !== null) {
+      this.sortPromptHandler('download');
     }
   }
 

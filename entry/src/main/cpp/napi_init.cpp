@@ -1,7 +1,7 @@
 #include "napi/native_api.h"
 #include "libxray.h"
 
-#define XRAY_CORE_VERSION "v1.260327.0"
+#define XRAY_CORE_VERSION "v1.261029.0"
 
 static napi_value NativeStartXray(napi_env env, napi_callback_info info)
 {

@@ -7,19 +7,25 @@
 流量路径：
 
 ```
-应用 ──► vpn-tun (VpnExtensionAbility) ──► gVisor 网络栈 (L3→L4)
+应用 ──► vpn-tun (VpnExtensionAbility) ──► 轻量用户态网络栈 (L3→L4)
       ──► Xray VLESS+REALITY 出站 ──► 互联网
 ```
 ![](intro.jpg)
 
 ## 功能特性
 
-- VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray 内核）
+- VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray v26.10.29 内核）
 - 多订阅分组管理：每组独立链接、独立更新、独立节点列表
-- 节点延迟测速 + 下载测速（走当前节点的临时 Xray 实例，不影响已建立的 VPN）
-- 剪贴板一键导入节点链接（自动申请读取权限）
-- 底部页签沉浸光感材质（HDS 组件，随设备算力自适应）
+- TCP Ping 延迟测速，测完可选「按延迟从低到高」排序
+- Speedtest 式下载测速：4 并发 + 预热排除慢启动 + 稳态计时段，
+  支持多选/全部分组节点批量测试，测完可选「按速率从高到低」排序；
+  节点列表同时展示延迟与速率（延迟在上、速率在下）
+- 多选节点批量测速 / 批量操作
+- 故障转移：当前节点不可达时自动切换
+- 分应用代理：全部 / 仅代理选中 / 排除选中
+- 剪贴板 / 扫码 / 手动添加节点，支持分享节点
 - 深色模式与主题色跟随系统
+- 底部页签沉浸光感材质（HDS 组件，随设备算力自适应）
 
 ## 安装
 
@@ -62,7 +68,7 @@ Releases 附带的是**未签名** HAP（原因见下文「签名」一节），
 | --- | --- |
 | `entry/src/main/ets/` | ArkTS 界面、订阅解析、VPN 扩展 Ability |
 | `entry/src/main/cpp/` | NAPI 模块（`libentry.so`），承载 Go 内核 |
-| `native/libxray/` | Go 封装 + 内嵌并打过补丁的 `xray-core` 与 `gvisor` |
+| `native/libxray/` | Go 封装 + 内嵌并打过补丁的 `xray-core` |
 | `native/build_libxray.sh` | 重新构建 `libxray.a`（openharmony/arm64）— Linux/CI |
 | `native/build_libxray.ps1` | 同上，Windows 版 |
 | `.github/workflows/build-libxray.yml` | 产出 `libxray.a` 的 CI |
@@ -206,9 +212,9 @@ git update-index --skip-worktree build-profile.json5
 ## OpenHarmony 补丁
 
 `native/libxray/go.mod` 通过 `replace` 把 `github.com/xtls/xray-core`
-和 `gvisor.dev/gvisor` 重定向到仓库内嵌副本。三组 overlay 让它们能在
-OpenHarmony 上构建运行 —— 见 `native/README.md`。
+重定向到仓库内嵌副本。两组 overlay 让它能在 OpenHarmony 上构建运行 ——
+见 `native/README.md`。
 
 构建与运行过程中踩过的完整坑位清单（initial-exec TLS 与 musl 的冲突、
-cgo `CC` 包装器、gVisor 的 `fstat` 拒绝、路由回环、CI 打包陷阱等），
+cgo `CC` 包装器、路由回环、CI 打包陷阱等），
 见 [`docs/build-notes.md`](docs/build-notes.md)。

@@ -38,9 +38,7 @@ Example:
 }
 
 func executeAddRules(cmd *base.Command, args []string) {
-	var (
-		shouldAppend bool
-	)
+	var shouldAppend bool
 	setSharedFlags(cmd)
 	cmd.Flag.BoolVar(&shouldAppend, "append", false, "")
 	cmd.Flag.Parse(args)
@@ -94,7 +92,8 @@ func executeAddRules(cmd *base.Command, args []string) {
 		if err != nil {
 			base.Fatalf("failed to perform AddRule: %s", err)
 		}
+		// if multiple files are specified, use append to merge them instead of overriding previous one
+		shouldAppend = true
 		showJSONResponse(resp)
 	}
-
 }

@@ -191,7 +191,7 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('内核版本取自 libxray.so 链接的 github.com/xtls/xray-core 模块版本（编译期写入，运行时为 Xray 26.3.27）。')
+      Text('内核版本取自 libxray.so 链接的 github.com/xtls/xray-core 模块版本（编译期写入，运行时为 Xray 26.10.29）。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')

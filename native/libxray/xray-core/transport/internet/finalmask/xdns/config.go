@@ -1,16 +1,14 @@
 package xdns
 
 import (
-	"net"
+	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/transport/internet/finalmask"
 )
 
-func (c *Config) UDP() {
+func (c *Config) WrapPacketConnClient(conn net.PacketConn, dest *net.Destination, dialer *finalmask.Dialer) (net.PacketConn, error) {
+	return NewClient(c, dialer)
 }
 
-func (c *Config) WrapPacketConnClient(raw net.PacketConn, level int, levelCount int) (net.PacketConn, error) {
-	return NewConnClient(c, raw)
-}
-
-func (c *Config) WrapPacketConnServer(raw net.PacketConn, level int, levelCount int) (net.PacketConn, error) {
-	return NewConnServer(c, raw)
+func (c *Config) WrapPacketConnServer(conn net.PacketConn, addr net.Addr, lc *finalmask.ListenConfig) (net.PacketConn, error) {
+	return NewServer(c, conn)
 }

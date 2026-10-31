@@ -1,24 +1,27 @@
 package conf
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/app/proxyman"
-	"github.com/xtls/xray-core/app/router"
 	"github.com/xtls/xray-core/app/stats"
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
-	"github.com/xtls/xray-core/common/platform"
 	"github.com/xtls/xray-core/common/serial"
 	core "github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/proxy/freedom"
+	"github.com/xtls/xray-core/proxy/masque"
+	"github.com/xtls/xray-core/proxy/vless"
+	"github.com/xtls/xray-core/proxy/vless/inbound"
+	"github.com/xtls/xray-core/proxy/vless/outbound"
 	"github.com/xtls/xray-core/transport/internet"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -34,6 +37,7 @@ var (
 		"trojan":        func() interface{} { return new(TrojanServerConfig) },
 		"wireguard":     func() interface{} { return &WireGuardConfig{IsClient: false} },
 		"hysteria":      func() interface{} { return new(HysteriaServerConfig) },
+		"masque":        func() interface{} { return new(MasqueServerConfig) },
 		"tun":           func() interface{} { return new(TunConfig) },
 	}, "protocol", "settings")
 
@@ -50,50 +54,54 @@ var (
 		"vmess":       func() interface{} { return new(VMessOutboundConfig) },
 		"trojan":      func() interface{} { return new(TrojanClientConfig) },
 		"hysteria":    func() interface{} { return new(HysteriaClientConfig) },
+		"masque":      func() interface{} { return new(MasqueClientConfig) },
 		"dns":         func() interface{} { return new(DNSOutboundConfig) },
 		"wireguard":   func() interface{} { return &WireGuardConfig{IsClient: true} },
 	}, "protocol", "settings")
 )
 
 type SniffingConfig struct {
-	Enabled         bool        `json:"enabled"`
-	DestOverride    *StringList `json:"destOverride"`
-	DomainsExcluded *StringList `json:"domainsExcluded"`
-	MetadataOnly    bool        `json:"metadataOnly"`
-	RouteOnly       bool        `json:"routeOnly"`
+	Enabled         bool       `json:"enabled"`
+	DestOverride    StringList `json:"destOverride"`
+	DomainsExcluded StringList `json:"domainsExcluded"`
+	IPsExcluded     StringList `json:"ipsExcluded"`
+	MetadataOnly    bool       `json:"metadataOnly"`
+	RouteOnly       bool       `json:"routeOnly"`
 }
 
 // Build implements Buildable.
 func (c *SniffingConfig) Build() (*proxyman.SniffingConfig, error) {
-	var p []string
-	if c.DestOverride != nil {
-		for _, protocol := range *c.DestOverride {
-			switch strings.ToLower(protocol) {
-			case "http":
-				p = append(p, "http")
-			case "tls", "https", "ssl":
-				p = append(p, "tls")
-			case "quic":
-				p = append(p, "quic")
-			case "fakedns", "fakedns+others":
-				p = append(p, "fakedns")
-			default:
-				return nil, errors.New("unknown protocol: ", protocol)
-			}
+	var protocols []string
+	for _, protocol := range c.DestOverride {
+		switch strings.ToLower(protocol) {
+		case "http":
+			protocols = append(protocols, "http")
+		case "tls", "https", "ssl":
+			protocols = append(protocols, "tls")
+		case "quic":
+			protocols = append(protocols, "quic")
+		case "fakedns", "fakedns+others":
+			protocols = append(protocols, "fakedns")
+		default:
+			return nil, errors.New("unknown protocol: ", protocol)
 		}
 	}
 
-	var d []string
-	if c.DomainsExcluded != nil {
-		for _, domain := range *c.DomainsExcluded {
-			d = append(d, strings.ToLower(domain))
-		}
+	domains, err := geodata.ParseDomainRules(c.DomainsExcluded, geodata.Domain_Substr)
+	if err != nil {
+		return nil, err
+	}
+
+	ips, err := geodata.ParseIPRules(c.IPsExcluded)
+	if err != nil {
+		return nil, err
 	}
 
 	return &proxyman.SniffingConfig{
 		Enabled:             c.Enabled,
-		DestinationOverride: p,
-		DomainsExcluded:     d,
+		DestinationOverride: protocols,
+		DomainsExcluded:     domains,
+		IpsExcluded:         ips,
 		MetadataOnly:        c.MetadataOnly,
 		RouteOnly:           c.RouteOnly,
 	}, nil
@@ -140,7 +148,7 @@ func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
 	// TUN inbound doesn't need port configuration as it uses network interface instead
 	if strings.ToLower(c.Protocol) == "tun" {
 		// Skip port validation for TUN
-	} else if c.ListenOn == nil {
+	} else if c.ListenOn == nil || len(c.ListenOn.String()) == 0 {
 		// Listen on anyip, must set PortList
 		if c.PortList == nil {
 			return nil, errors.New("Listen on AnyIP but no Port(s) set in InboundDetour.")
@@ -176,7 +184,7 @@ func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
 		receiverSettings.StreamSettings = ss
 		if strings.Contains(ss.SecurityType, "reality") && (receiverSettings.PortList == nil ||
 			len(receiverSettings.PortList.Ports()) != 1 || receiverSettings.PortList.Ports()[0] != 443) {
-			errors.LogWarning(context.Background(), `REALITY: Listening on non-443 ports may get your IP blocked by the GFW`)
+			errors.LogWarning(context.Background(), `REALITY: Listening on non-443 ports will increase the likelihood of your server's IP being blocked by the GFW`)
 		}
 	}
 	if c.SniffingConfig != nil {
@@ -202,6 +210,12 @@ func (c *InboundDetourConfig) Build() (*core.InboundHandlerConfig, error) {
 	if err != nil {
 		return nil, errors.New("failed to build inbound handler for protocol ", c.Protocol).Base(err)
 	}
+	if _, ok := ts.(*masque.ServerConfig); !ok && receiverSettings.StreamSettings != nil && receiverSettings.StreamSettings.ProtocolName == "masque" {
+		return nil, errors.New("the masque transport can only be used by the masque inbound")
+	}
+	if err := validateXDrive(ts, receiverSettings.StreamSettings, nil, receiverSettings.PortList); err != nil {
+		return nil, err
+	}
 
 	return &core.InboundHandlerConfig{
 		Tag:              c.Tag,
@@ -216,23 +230,100 @@ type OutboundDetourConfig struct {
 	Tag            string           `json:"tag"`
 	Settings       *json.RawMessage `json:"settings"`
 	StreamSetting  *StreamConfig    `json:"streamSettings"`
-	ProxySettings  *ProxyConfig     `json:"proxySettings"`
+	ProxySettings  *json.RawMessage `json:"proxySettings"`
 	MuxSettings    *MuxConfig       `json:"mux"`
 	TargetStrategy string           `json:"targetStrategy"`
 }
 
-func (c *OutboundDetourConfig) checkChainProxyConfig() error {
-	if c.StreamSetting == nil || c.ProxySettings == nil || c.StreamSetting.SocketSettings == nil {
+func requiresTransportSecurity(address *Address) bool {
+	if address == nil || address.Address == nil {
+		return true
+	}
+	if address.Family().IsIP() {
+		ip := address.IP()
+		return !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast()
+	}
+	domain := strings.TrimSuffix(strings.ToLower(address.Domain()), ".")
+	return !geodata.GetPrivateDomainMatcher().MatchAny(domain)
+}
+
+func validateOutboundTransportSecurity(rawConfig interface{}, senderSettings *proxyman.SenderConfig) error {
+	if senderSettings.StreamSettings != nil && senderSettings.StreamSettings.GetSecurityType() != "" {
 		return nil
 	}
-	if len(c.ProxySettings.Tag) > 0 && len(c.StreamSetting.SocketSettings.DialerProxy) > 0 {
-		return errors.New("proxySettings.tag is conflicted with sockopt.dialerProxy").AtWarning()
+
+	if vlessCfg, ok := rawConfig.(*VLessOutboundConfig); ok {
+		if vlessCfg.Encryption != "" && vlessCfg.Encryption != "none" {
+			return nil
+		}
+		if requiresTransportSecurity(vlessCfg.Address) {
+			return errors.New("vless without TLS or other encryption is prohibited unless the server address is a private IP or domain")
+		}
+	}
+
+	if tjCfg, ok := rawConfig.(*TrojanClientConfig); ok {
+		if requiresTransportSecurity(tjCfg.Servers[0].Address) {
+			return errors.New("trojan without TLS is prohibited unless the server address is a private IP or domain")
+		}
+	}
+
+	return nil
+}
+
+// validateXDrive allows only VLESS with encryption on xdrive, and on the client Mux.Cool for every connection
+func validateXDrive(ts proto.Message, ss *internet.StreamConfig, ms *proxyman.MultiplexingConfig, pl *net.PortList) error {
+	if ss == nil || ss.ProtocolName != "xdrive" {
+		return nil
+	}
+	switch c := ts.(type) {
+	case *outbound.Config:
+		a, err := c.Vnext.User.Account.GetInstance()
+		if err != nil {
+			return err
+		}
+		account := a.(*vless.Account)
+		if account.Flow != "" {
+			return errors.New(`the xdrive transport doesn't support VLESS "flow"`)
+		}
+		if account.Encryption == "none" {
+			return errors.New(`the xdrive transport needs VLESS "encryption", run "xray vlessenc" to get one`)
+		}
+		// reverse opens its own mux
+		if account.Reverse == nil && (ms == nil || !ms.Enabled || ms.Concurrency < 0 || ms.XudpConcurrency < 0 || ms.XudpProxyUDP443 == "skip") {
+			return errors.New(`the xdrive transport needs "mux" enabled, with no negative "concurrency" or "xudpConcurrency" and no "xudpProxyUDP443":"skip"`)
+		}
+		if account.Testpre != 0 {
+			return errors.New(`the xdrive transport doesn't support VLESS "testpre"`)
+		}
+	case *inbound.Config:
+		if c.Decryption == "none" {
+			return errors.New(`the xdrive transport needs VLESS "decryption", run "xray vlessenc" to get one`)
+		}
+		for _, user := range c.Users {
+			a, err := user.Account.GetInstance()
+			if err != nil {
+				return err
+			}
+			if a.(*vless.Account).Flow != "" {
+				return errors.New(`the xdrive transport doesn't support VLESS "flow"`)
+			}
+		}
+		// every port gets its own listener on the same folder, and each of them accepts the same session
+		if pl != nil && len(pl.Ports()) != 1 {
+			return errors.New("the xdrive transport can only listen on one port")
+		}
+	default:
+		return errors.New("the xdrive transport can only be used by VLESS")
 	}
 	return nil
 }
 
 // Build implements Buildable.
 func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
+	if c.ProxySettings != nil {
+		return nil, errors.PrintRemovedFeatureError(`outbound "proxySettings"`, `"streamSettings.sockopt.dialerProxy"`)
+	}
+
 	senderSettings := &proxyman.SenderConfig{}
 	switch strings.ToLower(c.TargetStrategy) {
 	case "asis", "":
@@ -260,13 +351,10 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 	default:
 		return nil, errors.New("unsupported target domain strategy: ", c.TargetStrategy)
 	}
-	if err := c.checkChainProxyConfig(); err != nil {
-		return nil, err
-	}
 
 	if c.SendThrough != nil {
 		address := ParseSendThough(c.SendThrough)
-		//Check if CIDR exists
+		// Check if CIDR exists
 		if strings.Contains(*c.SendThrough, "/") {
 			senderSettings.ViaCidr = strings.Split(*c.SendThrough, "/")[1]
 		} else {
@@ -286,26 +374,6 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 			return nil, errors.New("failed to build stream settings for outbound detour").Base(err)
 		}
 		senderSettings.StreamSettings = ss
-	}
-
-	if c.ProxySettings != nil {
-		ps, err := c.ProxySettings.Build()
-		if err != nil {
-			return nil, errors.New("invalid outbound detour proxy settings").Base(err)
-		}
-		if ps.TransportLayerProxy {
-			if senderSettings.StreamSettings != nil {
-				if senderSettings.StreamSettings.SocketSettings != nil {
-					senderSettings.StreamSettings.SocketSettings.DialerProxy = ps.Tag
-				} else {
-					senderSettings.StreamSettings.SocketSettings = &internet.SocketConfig{DialerProxy: ps.Tag}
-				}
-			} else {
-				senderSettings.StreamSettings = &internet.StreamConfig{SocketSettings: &internet.SocketConfig{DialerProxy: ps.Tag}}
-			}
-			ps = nil
-		}
-		senderSettings.ProxySettings = ps
 	}
 
 	if c.MuxSettings != nil {
@@ -328,6 +396,41 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 	if err != nil {
 		return nil, errors.New("failed to build outbound handler for protocol ", c.Protocol).Base(err)
 	}
+	if err := validateXDrive(ts, senderSettings.StreamSettings, senderSettings.MultiplexSettings, nil); err != nil {
+		return nil, err
+	}
+	if err := validateOutboundTransportSecurity(rawConfig, senderSettings); err != nil {
+		return nil, err
+	}
+
+	if _, ok := ts.(*masque.ClientConfig); !ok && senderSettings.StreamSettings != nil && senderSettings.StreamSettings.ProtocolName == "masque" {
+		return nil, errors.New("the masque transport can only be used by the masque outbound")
+	}
+
+	if fc, ok := ts.(*freedom.Config); ok {
+		if senderSettings.StreamSettings != nil &&
+			senderSettings.StreamSettings.SocketSettings != nil &&
+			senderSettings.StreamSettings.SocketSettings.AddressPortStrategy != internet.AddressPortStrategy_None {
+			return nil, errors.New(`freedom outbound does not support "sockopt.addressPortStrategy"`)
+		}
+
+		var strategy internet.DomainStrategy
+		if strategy = senderSettings.TargetStrategy; strategy != internet.DomainStrategy_AS_IS {
+			errors.LogWarning(context.Background(), `The "outbound.targetStrategy" setting is not supported directly by freedom and has been automatically migrated to "sockopt.domainStrategy" with no behavior change.`)
+			senderSettings.TargetStrategy = internet.DomainStrategy_AS_IS
+		} else if strategy = fc.DomainStrategy; strategy != internet.DomainStrategy_AS_IS {
+			errors.LogWarning(context.Background(), `The "freedom.domainStrategy" setting is deprecated and will be removed. For compatibility, its value has been automatically migrated to "sockopt.domainStrategy". Please update your config before removal.`)
+		}
+		if strategy != internet.DomainStrategy_AS_IS {
+			if senderSettings.StreamSettings == nil {
+				senderSettings.StreamSettings = &internet.StreamConfig{}
+			}
+			if senderSettings.StreamSettings.SocketSettings == nil {
+				senderSettings.StreamSettings.SocketSettings = &internet.SocketConfig{}
+			}
+			senderSettings.StreamSettings.SocketSettings.DomainStrategy = strategy
+		}
+	}
 
 	return &core.OutboundHandlerConfig{
 		SenderSettings: serial.ToTypedMessage(senderSettings),
@@ -343,11 +446,20 @@ func (c *StatsConfig) Build() (*stats.Config, error) {
 	return &stats.Config{}, nil
 }
 
+type EnvConfig map[string]string
+
+func (c EnvConfig) Override(o EnvConfig) {
+	for key, value := range o {
+		c[key] = value
+	}
+}
+
 type Config struct {
 	// Deprecated: Global transport config is no longer used
 	// left for returning error
 	Transport map[string]json.RawMessage `json:"transport"`
 
+	Env              EnvConfig               `json:"env"`
 	LogConfig        *LogConfig              `json:"log"`
 	RouterConfig     *RouterConfig           `json:"routing"`
 	DNSConfig        *DNSConfig              `json:"dns"`
@@ -362,6 +474,7 @@ type Config struct {
 	Observatory      *ObservatoryConfig      `json:"observatory"`
 	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
 	Version          *VersionConfig          `json:"version"`
+	Geodata          *GeodataConfig          `json:"geodata"`
 }
 
 func (c *Config) findInboundTag(tag string) int {
@@ -402,6 +515,12 @@ func (c *Config) Override(o *Config, fn string) {
 	if o.Transport != nil {
 		c.Transport = o.Transport
 	}
+	if o.Env != nil {
+		if c.Env == nil {
+			c.Env = EnvConfig{}
+		}
+		c.Env.Override(o.Env)
+	}
 	if o.Policy != nil {
 		c.Policy = o.Policy
 	}
@@ -434,6 +553,10 @@ func (c *Config) Override(o *Config, fn string) {
 		c.Version = o.Version
 	}
 
+	if o.Geodata != nil {
+		c.Geodata = o.Geodata
+	}
+
 	// update the Inbound in slice if the only one in override config has same tag
 	if len(o.InboundConfigs) > 0 {
 		for i := range o.InboundConfigs {
@@ -445,7 +568,6 @@ func (c *Config) Override(o *Config, fn string) {
 				c.InboundConfigs = append(c.InboundConfigs, o.InboundConfigs[i])
 				errors.LogInfo(context.Background(), "[", fn, "] appended inbound with tag: ", o.InboundConfigs[i].Tag)
 			}
-
 		}
 	}
 
@@ -474,6 +596,12 @@ func (c *Config) Override(o *Config, fn string) {
 
 // Build implements Buildable.
 func (c *Config) Build() (*core.Config, error) {
+	for key, value := range c.Env {
+		if err := os.Setenv(key, value); err != nil {
+			return nil, errors.New("failed to apply environment configuration").Base(err)
+		}
+	}
+
 	if err := PostProcessConfigureFile(c); err != nil {
 		return nil, errors.New("failed to post-process configuration file").Base(err)
 	}
@@ -481,7 +609,6 @@ func (c *Config) Build() (*core.Config, error) {
 	config := &core.Config{
 		App: []*serial.TypedMessage{
 			serial.ToTypedMessage(&dispatcher.Config{}),
-			serial.ToTypedMessage(&proxyman.InboundConfig{}),
 			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
 		},
 	}
@@ -543,6 +670,7 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	if c.Reverse != nil {
+		return nil, errors.PrintRemovedFeatureError(`"legacy reverse"`, `"VLESS Reverse Proxy"`)
 		r, err := c.Reverse.Build()
 		if err != nil {
 			return nil, errors.New("failed to build reverse configuration").Base(err)
@@ -582,6 +710,17 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}
 
+	if c.Geodata != nil {
+		r, err := c.Geodata.Build()
+		if err != nil {
+			return nil, errors.New("failed to build geodata configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
+	// Initialize the inbound module last to ensure inbound connections are handled correctly.
+	config.App = append(config.App, serial.ToTypedMessage(&proxyman.InboundConfig{}))
+
 	var inbounds []InboundDetourConfig
 
 	if len(c.InboundConfigs) > 0 {
@@ -615,187 +754,6 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	return config, nil
-}
-
-func (c *Config) BuildMPHCache(customMatcherFilePath *string) error {
-	var geosite []*router.GeoSite
-	deps := make(map[string][]string)
-	uniqueGeosites := make(map[string]bool)
-	uniqueTags := make(map[string]bool)
-	matcherFilePath := platform.GetAssetLocation("matcher.cache")
-
-	if customMatcherFilePath != nil {
-		matcherFilePath = *customMatcherFilePath
-	}
-
-	processGeosite := func(dStr string) bool {
-		prefix := ""
-		if strings.HasPrefix(dStr, "geosite:") {
-			prefix = "geosite:"
-		} else if strings.HasPrefix(dStr, "ext-domain:") {
-			prefix = "ext-domain:"
-		}
-		if prefix == "" {
-			return false
-		}
-		key := strings.ToLower(dStr)
-		country := strings.ToUpper(dStr[len(prefix):])
-		if !uniqueGeosites[country] {
-			ds, err := loadGeositeWithAttr("geosite.dat", country)
-			if err == nil {
-				uniqueGeosites[country] = true
-				geosite = append(geosite, &router.GeoSite{CountryCode: key, Domain: ds})
-			}
-		}
-		return true
-	}
-
-	processDomains := func(tag string, rawDomains []string) {
-		var manualDomains []*router.Domain
-		var dDeps []string
-		for _, dStr := range rawDomains {
-			if processGeosite(dStr) {
-				dDeps = append(dDeps, strings.ToLower(dStr))
-			} else {
-				ds, err := parseDomainRule(dStr)
-				if err == nil {
-					manualDomains = append(manualDomains, ds...)
-				}
-			}
-		}
-		if len(manualDomains) > 0 {
-			if !uniqueTags[tag] {
-				uniqueTags[tag] = true
-				geosite = append(geosite, &router.GeoSite{CountryCode: tag, Domain: manualDomains})
-			}
-		}
-		if len(dDeps) > 0 {
-			deps[tag] = append(deps[tag], dDeps...)
-		}
-	}
-
-	// proccess rules
-	if c.RouterConfig != nil {
-		for _, rawRule := range c.RouterConfig.RuleList {
-			type SimpleRule struct {
-				RuleTag string      `json:"ruleTag"`
-				Domain  *StringList `json:"domain"`
-				Domains *StringList `json:"domains"`
-			}
-			var sr SimpleRule
-			json.Unmarshal(rawRule, &sr)
-			if sr.RuleTag == "" {
-				continue
-			}
-			var allDomains []string
-			if sr.Domain != nil {
-				allDomains = append(allDomains, *sr.Domain...)
-			}
-			if sr.Domains != nil {
-				allDomains = append(allDomains, *sr.Domains...)
-			}
-			processDomains(sr.RuleTag, allDomains)
-		}
-	}
-
-	// proccess dns servers
-	if c.DNSConfig != nil {
-		for _, ns := range c.DNSConfig.Servers {
-			if ns.Tag == "" {
-				continue
-			}
-			processDomains(ns.Tag, ns.Domains)
-		}
-	}
-
-	var hostIPs map[string][]string
-	if c.DNSConfig != nil && c.DNSConfig.Hosts != nil {
-		hostIPs = make(map[string][]string)
-		var hostDeps []string
-		var hostPatterns []string
-
-		// use raw map to avoid expanding geosites
-		var domains []string
-		for domain := range c.DNSConfig.Hosts.Hosts {
-			domains = append(domains, domain)
-		}
-		sort.Strings(domains)
-
-		manualHostGroups := make(map[string][]*router.Domain)
-		manualHostIPs := make(map[string][]string)
-		manualHostNames := make(map[string]string)
-
-		for _, domain := range domains {
-			ha := c.DNSConfig.Hosts.Hosts[domain]
-			m := getHostMapping(ha)
-
-			var ips []string
-			if m.ProxiedDomain != "" {
-				ips = append(ips, m.ProxiedDomain)
-			} else {
-				for _, ip := range m.Ip {
-					ips = append(ips, net.IPAddress(ip).String())
-				}
-			}
-
-			if processGeosite(domain) {
-				tag := strings.ToLower(domain)
-				hostDeps = append(hostDeps, tag)
-				hostIPs[tag] = ips
-				hostPatterns = append(hostPatterns, domain)
-			} else {
-				// build manual domains by their destination IPs
-				sort.Strings(ips)
-				ipKey := strings.Join(ips, ",")
-				ds, err := parseDomainRule(domain)
-				if err == nil {
-					manualHostGroups[ipKey] = append(manualHostGroups[ipKey], ds...)
-					manualHostIPs[ipKey] = ips
-					if _, ok := manualHostNames[ipKey]; !ok {
-						manualHostNames[ipKey] = domain
-					}
-				}
-			}
-		}
-
-		// create manual host groups
-		var ipKeys []string
-		for k := range manualHostGroups {
-			ipKeys = append(ipKeys, k)
-		}
-		sort.Strings(ipKeys)
-
-		for _, k := range ipKeys {
-			tag := manualHostNames[k]
-			geosite = append(geosite, &router.GeoSite{CountryCode: tag, Domain: manualHostGroups[k]})
-			hostDeps = append(hostDeps, tag)
-			hostIPs[tag] = manualHostIPs[k]
-
-			// record tag _ORDER links the matcher to IP addresses
-			hostPatterns = append(hostPatterns, tag)
-		}
-
-		deps["HOSTS"] = hostDeps
-		hostIPs["_ORDER"] = hostPatterns
-	}
-
-	f, err := os.Create(matcherFilePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-
-	if err := router.SerializeGeoSiteList(geosite, deps, hostIPs, &buf); err != nil {
-		return err
-	}
-
-	if _, err := f.Write(buf.Bytes()); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // Convert string to Address.

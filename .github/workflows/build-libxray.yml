@@ -37,7 +37,7 @@ permissions:
 env:
   OHOS_GO_VERSION: ${{ github.event.inputs.ohos_go_version || 'v1.27.2-ohos-beta1' }}
   OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
-  XRAY_VERSION: v1.260327.0
+  XRAY_VERSION: v1.261029.0
 
 jobs:
   build:
@@ -175,6 +175,7 @@ jobs:
             --title "newer xray-core available: ${latest}" \
             --body "Vendored \`go.mod\` pins \`${vendored}\`; upstream latest is \`${latest}\`.
 
-          To move up: re-vendor \`native/libxray/xray-core\` (+ \`gvisor\`) at that module
-          version, re-apply the three OpenHarmony overrides (see \`native/README.md\`), bump
-          \`XRAY_VERSION\` in \`.github/workflows/build-libxray.yml\`, then run this workflow."
+          To move up: re-vendor \`native/libxray/xray-core\` at that module
+          version, re-apply the two OpenHarmony overrides (see \`native/README.md\`), bump
+          \`XRAY_VERSION\` in \`.github/workflows/build-libxray.yml\` and
+          \`XRAY_CORE_VERSION\` in \`entry/src/main/cpp/napi_init.cpp\`, then run this workflow."

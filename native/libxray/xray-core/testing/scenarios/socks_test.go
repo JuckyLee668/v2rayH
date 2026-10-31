@@ -50,7 +50,9 @@ func TestSocksBridgeTCP(t *testing.T) {
 		},
 		Outbound: []*core.OutboundHandlerConfig{
 			{
-				ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					FinalRules: []*freedom.FinalRuleConfig{{Action: freedom.RuleAction_Allow}},
+				}),
 			},
 		},
 	}
@@ -64,9 +66,9 @@ func TestSocksBridgeTCP(t *testing.T) {
 					Listen:   net.NewIPOrDomain(net.LocalHostIP),
 				}),
 				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-					Address:  net.NewIPOrDomain(dest.Address),
-					Port:     uint32(dest.Port),
-					Networks: []net.Network{net.Network_TCP},
+					RewriteAddress:  net.NewIPOrDomain(dest.Address),
+					RewritePort:     uint32(dest.Port),
+					AllowedNetworks: []net.Network{net.Network_TCP},
 				}),
 			},
 		},
@@ -76,7 +78,7 @@ func TestSocksBridgeTCP(t *testing.T) {
 					Server: &protocol.ServerEndpoint{
 						Address: net.NewIPOrDomain(net.LocalHostIP),
 						Port:    uint32(serverPort),
-						User:    &protocol.User{
+						User: &protocol.User{
 							Account: serial.ToTypedMessage(&socks.Account{
 								Username: "Test Account",
 								Password: "Test Password",
@@ -125,7 +127,9 @@ func TestSocksWithHttpRequest(t *testing.T) {
 		},
 		Outbound: []*core.OutboundHandlerConfig{
 			{
-				ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					FinalRules: []*freedom.FinalRuleConfig{{Action: freedom.RuleAction_Allow}},
+				}),
 			},
 		},
 	}
@@ -139,9 +143,9 @@ func TestSocksWithHttpRequest(t *testing.T) {
 					Listen:   net.NewIPOrDomain(net.LocalHostIP),
 				}),
 				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-					Address:  net.NewIPOrDomain(dest.Address),
-					Port:     uint32(dest.Port),
-					Networks: []net.Network{net.Network_TCP},
+					RewriteAddress:  net.NewIPOrDomain(dest.Address),
+					RewritePort:     uint32(dest.Port),
+					AllowedNetworks: []net.Network{net.Network_TCP},
 				}),
 			},
 		},
@@ -151,7 +155,7 @@ func TestSocksWithHttpRequest(t *testing.T) {
 					Server: &protocol.ServerEndpoint{
 						Address: net.NewIPOrDomain(net.LocalHostIP),
 						Port:    uint32(serverPort),
-						User:    &protocol.User{
+						User: &protocol.User{
 							Account: serial.ToTypedMessage(&http.Account{
 								Username: "Test Account",
 								Password: "Test Password",
@@ -205,15 +209,15 @@ func TestSocksBridageUDP(t *testing.T) {
 						Listen:   net.NewIPOrDomain(net.LocalHostIP),
 					}),
 					ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-						Address:  net.NewIPOrDomain(dest.Address),
-						Port:     uint32(dest.Port),
-						Networks: []net.Network{net.Network_UDP},
+						RewriteAddress:  net.NewIPOrDomain(dest.Address),
+						RewritePort:     uint32(dest.Port),
+						AllowedNetworks: []net.Network{net.Network_UDP},
 					}),
 				},
 			},
 			Outbound: []*core.OutboundHandlerConfig{
 				{
-					ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+					ProxySettings: serial.ToTypedMessage(&freedom.Config{FinalRules: []*freedom.FinalRuleConfig{{Action: freedom.RuleAction_Allow}}}),
 				},
 			},
 		}
@@ -222,6 +226,9 @@ func TestSocksBridageUDP(t *testing.T) {
 		if server != nil && WaitConnAvailableWithTest(t, testUDPConn(serverPort+1, 1024, time.Second*2)) {
 			defer CloseServer(server)
 			break
+		}
+		if server != nil {
+			CloseServer(server)
 		}
 		retry++
 		if retry > 5 {
@@ -239,9 +246,9 @@ func TestSocksBridageUDP(t *testing.T) {
 					Listen:   net.NewIPOrDomain(net.LocalHostIP),
 				}),
 				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-					Address:  net.NewIPOrDomain(dest.Address),
-					Port:     uint32(dest.Port),
-					Networks: []net.Network{net.Network_UDP},
+					RewriteAddress:  net.NewIPOrDomain(dest.Address),
+					RewritePort:     uint32(dest.Port),
+					AllowedNetworks: []net.Network{net.Network_UDP},
 				}),
 			},
 		},
@@ -251,7 +258,7 @@ func TestSocksBridageUDP(t *testing.T) {
 					Server: &protocol.ServerEndpoint{
 						Address: net.NewIPOrDomain(net.LocalHostIP),
 						Port:    uint32(serverPort),
-						User:    &protocol.User{
+						User: &protocol.User{
 							Account: serial.ToTypedMessage(&socks.Account{
 								Username: "Test Account",
 								Password: "Test Password",
@@ -316,9 +323,9 @@ func TestSocksBridageUDPWithRouting(t *testing.T) {
 						Listen:   net.NewIPOrDomain(net.LocalHostIP),
 					}),
 					ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-						Address:  net.NewIPOrDomain(dest.Address),
-						Port:     uint32(dest.Port),
-						Networks: []net.Network{net.Network_UDP},
+						RewriteAddress:  net.NewIPOrDomain(dest.Address),
+						RewritePort:     uint32(dest.Port),
+						AllowedNetworks: []net.Network{net.Network_UDP},
 					}),
 				},
 			},
@@ -328,7 +335,7 @@ func TestSocksBridageUDPWithRouting(t *testing.T) {
 				},
 				{
 					Tag:           "out",
-					ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+					ProxySettings: serial.ToTypedMessage(&freedom.Config{FinalRules: []*freedom.FinalRuleConfig{{Action: freedom.RuleAction_Allow}}}),
 				},
 			},
 		}
@@ -337,6 +344,9 @@ func TestSocksBridageUDPWithRouting(t *testing.T) {
 		if server != nil && WaitConnAvailableWithTest(t, testUDPConn(serverPort+1, 1024, time.Second*2)) {
 			defer CloseServer(server)
 			break
+		}
+		if server != nil {
+			CloseServer(server)
 		}
 		retry++
 		if retry > 5 {
@@ -354,9 +364,9 @@ func TestSocksBridageUDPWithRouting(t *testing.T) {
 					Listen:   net.NewIPOrDomain(net.LocalHostIP),
 				}),
 				ProxySettings: serial.ToTypedMessage(&dokodemo.Config{
-					Address:  net.NewIPOrDomain(dest.Address),
-					Port:     uint32(dest.Port),
-					Networks: []net.Network{net.Network_UDP},
+					RewriteAddress:  net.NewIPOrDomain(dest.Address),
+					RewritePort:     uint32(dest.Port),
+					AllowedNetworks: []net.Network{net.Network_UDP},
 				}),
 			},
 		},
@@ -424,7 +434,9 @@ func TestSocksConformanceMod(t *testing.T) {
 		},
 		Outbound: []*core.OutboundHandlerConfig{
 			{
-				ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+				ProxySettings: serial.ToTypedMessage(&freedom.Config{
+					FinalRules: []*freedom.FinalRuleConfig{{Action: freedom.RuleAction_Allow}},
+				}),
 			},
 		},
 	}

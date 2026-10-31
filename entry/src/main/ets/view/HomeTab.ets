@@ -9,9 +9,47 @@ export struct HomeTab {
   @StorageProp('topRectHeight') topRectPx: number = 0;
   @StorageProp('bottomRectHeight') bottomRectPx: number = 0;
   @State statsTick: number = 0;
+  @State panelOpen: boolean = false;
   private timerId: number = -1;
 
   aboutToAppear(): void {
+    this.app.sortPromptHandler = (mode: string): void => {
+      if (mode === 'ping') {
+        AlertDialog.show({
+          title: '测延迟完成',
+          message: '是否按延迟从低到高排序节点？',
+          primaryButton: {
+            value: '否',
+            action: () => {
+            }
+          },
+          secondaryButton: {
+            value: '是',
+            fontColor: AppTheme.PRIMARY,
+            action: () => {
+              this.app.sortByPing();
+            }
+          }
+        });
+      } else {
+        AlertDialog.show({
+          title: '测下载完成',
+          message: '是否按速率从高到低排序节点？',
+          primaryButton: {
+            value: '否',
+            action: () => {
+            }
+          },
+          secondaryButton: {
+            value: '是',
+            fontColor: AppTheme.PRIMARY,
+            action: () => {
+              this.app.sortBySpeed();
+            }
+          }
+        });
+      }
+    };
     this.timerId = setInterval(() => {
       this.statsTick = this.statsTick + 1;
       if (this.app.connected) {
@@ -21,6 +59,7 @@ export struct HomeTab {
   }
 
   aboutToDisappear(): void {
+    this.app.sortPromptHandler = null;
     if (this.timerId >= 0) {
       clearInterval(this.timerId);
       this.timerId = -1;
@@ -38,6 +77,29 @@ export struct HomeTab {
       return 'IP 获取中...';
     }
     return 'IP 未获取';
+  }
+
+  private confirmDownloadTest(): void {
+    let n: number = this.app.downloadTargetsCount();
+    AlertDialog.show({
+      title: '测下载',
+      message: '将对 ' + n.toString() + ' 个节点逐个测速，每个节点使用 4 个并发连接' +
+        '下载最多约 100MB 数据（先预热不计速、再测稳态速率，与 Speedtest 同类方法），' +
+        '总计最多约 ' + (n * 100).toString() + 'MB 流量。\n\n' +
+        '耗时与节点数成正比，建议在 Wi-Fi 或流量充足时进行。是否继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '开始测下载',
+        fontColor: AppTheme.PRIMARY,
+        action: () => {
+          this.app.testDownload();
+        }
+      }
+    });
   }
 
   @Builder
@@ -171,26 +233,22 @@ export struct HomeTab {
 
   private testSubtitle(): string {
     if (this.app.testing) {
-      return '正在 TCP Ping 测速...';
+      return '正在测延迟 (TCP Ping)...';
     }
     if (this.app.downloadTesting) {
-      return '正在下载 20MB 测试文件...';
+      return '正在测下载 (每节点 4 并发, 约 100MB)...';
     }
     let n: number = this.app.multiCount();
     if (n > 0) {
-      return '已多选 ' + n.toString() + ' 个节点，点「延迟」只测选中';
+      return '已多选 ' + n.toString() + ' 个节点，测延迟/测下载只测选中';
     }
-    let srv: ServerConfig | undefined = this.app.currentNode();
-    if (srv !== undefined) {
-      return '下载测速节点: ' + srv.name;
-    }
-    return '';
+    return '测延迟/测下载将测试全部分组节点';
   }
 
   @Builder
   testPanel() {
-    Column({ space: 8 }) {
-      Row({ space: 8 }) {
+    Column() {
+      Row() {
         Column({ space: 2 }) {
           Text('节点测速')
             .fontSize(13)
@@ -205,54 +263,62 @@ export struct HomeTab {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        if (this.app.multiCount() > 0 && !this.app.testing) {
-          Button('取消多选')
-            .type(ButtonType.Capsule)
-            .height(30)
-            .fontSize(12)
-            .fontColor(AppTheme.TEXT_SUB)
-            .backgroundColor(AppTheme.CHIP_BG)
-            .padding({ left: 10, right: 10 })
-            .onClick(() => {
-              this.app.clearMulti();
-            })
-        }
-
-        Button(this.app.testing ? '测速中' : (this.app.multiCount() > 0 ? '测选中' : '延迟'))
-          .type(ButtonType.Capsule)
-          .height(30)
-          .fontSize(12)
-          .fontColor(this.app.testing ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
-          .backgroundColor(this.app.testing ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
-          .padding({ left: 12, right: 12 })
-          .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
-          .onClick(() => {
-            this.app.testAll();
-          })
-
-        Button(this.app.downloadTesting ? '下载中' : '下载')
-          .type(ButtonType.Capsule)
-          .height(30)
-          .fontSize(12)
-          .fontColor(this.app.downloadTesting ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
-          .backgroundColor(this.app.downloadTesting ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
-          .padding({ left: 12, right: 12 })
-          .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
-          .onClick(() => {
-            this.app.testDownload();
-          })
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(14)
+          .fontColor([AppTheme.TEXT_WEAK])
+          .rotate({ angle: this.panelOpen ? 180 : 0 })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.panelOpen = !this.panelOpen;
+        if (!this.panelOpen && this.app.multiCount() > 0) {
+          this.app.clearMulti();
+        }
+      })
 
-      if (this.app.downloadResultText().length > 0) {
-        Text(this.app.downloadResultText())
-          .fontSize(12)
-          .fontColor(this.app.downloadError.length > 0 ? AppTheme.DANGER : AppTheme.PRIMARY)
-          .width('100%')
-          .textAlign(TextAlign.End)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      if (this.panelOpen) {
+        Row({ space: 8 }) {
+          if (this.app.multiCount() > 0 && !this.app.testing) {
+            Button('取消多选')
+              .type(ButtonType.Capsule)
+              .height(30)
+              .fontSize(12)
+              .fontColor(AppTheme.TEXT_SUB)
+              .backgroundColor(AppTheme.CHIP_BG)
+              .padding({ left: 10, right: 10 })
+              .onClick(() => {
+                this.app.clearMulti();
+              })
+          }
+
+          Button(this.app.testing ? '测延迟中' : (this.app.multiCount() > 0 ? '测选中' : '测延迟'))
+            .type(ButtonType.Capsule)
+            .height(30)
+            .fontSize(12)
+            .fontColor(this.app.testing ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
+            .backgroundColor(this.app.testing ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+            .padding({ left: 12, right: 12 })
+            .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+            .onClick(() => {
+              this.app.testAll();
+            })
+
+          Button(this.app.downloadTesting ? '测下载中' : '测下载')
+            .type(ButtonType.Capsule)
+            .height(30)
+            .fontSize(12)
+            .fontColor(this.app.downloadTesting ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
+            .backgroundColor(this.app.downloadTesting ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+            .padding({ left: 12, right: 12 })
+            .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+            .onClick(() => {
+              this.confirmDownloadTest();
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 10 })
       }
     }
     .width('100%')
@@ -265,24 +331,26 @@ export struct HomeTab {
   @Builder
   nodeRow(item: ServerConfig, idx: number) {
     Row() {
-      if (this.app.isMulti(idx)) {
-        SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
-          .fontSize(21)
-          .fontColor([AppTheme.PRIMARY])
-          .margin({ right: 12 })
-          .onClick(() => {
-            this.app.toggleMulti(idx);
-          })
-      } else {
-        Row()
-          .width(20)
-          .height(20)
-          .borderRadius(10)
-          .border({ width: 1.5, color: AppTheme.TEXT_WEAK })
-          .margin({ right: 12 })
-          .onClick(() => {
-            this.app.toggleMulti(idx);
-          })
+      if (this.panelOpen) {
+        if (this.app.isMulti(idx)) {
+          SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))
+            .fontSize(21)
+            .fontColor([AppTheme.PRIMARY])
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.app.toggleMulti(idx);
+            })
+        } else {
+          Row()
+            .width(20)
+            .height(20)
+            .borderRadius(10)
+            .border({ width: 1.5, color: AppTheme.TEXT_WEAK })
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.app.toggleMulti(idx);
+            })
+        }
       }
 
       Column() {
@@ -304,10 +372,18 @@ export struct HomeTab {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      Text(this.app.pingText(idx))
-        .fontSize(12)
-        .fontColor(AppTheme.TEXT_SUB)
-        .margin({ right: 8 })
+      Column({ space: 2 }) {
+        Text(this.app.pingText(idx))
+          .fontSize(12)
+          .fontColor(AppTheme.TEXT_SUB)
+        if (this.app.speedText(idx).length > 0) {
+          Text(this.app.speedText(idx))
+            .fontSize(12)
+            .fontColor(this.app.speedFailed(idx) ? AppTheme.DANGER : AppTheme.PRIMARY)
+        }
+      }
+      .alignItems(HorizontalAlign.End)
+      .margin({ right: 8 })
 
       if (this.app.selected === idx) {
         SymbolGlyph($r('sys.symbol.checkmark_circle_fill'))

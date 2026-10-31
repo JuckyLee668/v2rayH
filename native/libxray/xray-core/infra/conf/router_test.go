@@ -2,77 +2,19 @@ package conf_test
 
 import (
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	_ "unsafe"
 
 	"github.com/xtls/xray-core/app/router"
-	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/geodata"
 	"github.com/xtls/xray-core/common/net"
-	"github.com/xtls/xray-core/common/platform"
-	"github.com/xtls/xray-core/common/platform/filesystem"
 	"github.com/xtls/xray-core/common/serial"
 	. "github.com/xtls/xray-core/infra/conf"
+
 	"google.golang.org/protobuf/proto"
 )
-
-func getAssetPath(file string) (string, error) {
-	path := platform.GetAssetLocation(file)
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		path := filepath.Join("..", "..", "resources", file)
-		_, err := os.Stat(path)
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("can't find %s in standard asset locations or {project_root}/resources", file)
-		}
-		if err != nil {
-			return "", fmt.Errorf("can't stat %s: %v", path, err)
-		}
-		return path, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("can't stat %s: %v", path, err)
-	}
-
-	return path, nil
-}
-
-func TestToCidrList(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test-")
-	if err != nil {
-		t.Fatalf("can't create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	geoipPath, err := getAssetPath("geoip.dat")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	common.Must(filesystem.CopyFile(filepath.Join(tempDir, "geoip.dat"), geoipPath))
-	common.Must(filesystem.CopyFile(filepath.Join(tempDir, "geoiptestrouter.dat"), geoipPath))
-
-	os.Setenv("xray.location.asset", tempDir)
-	defer os.Unsetenv("xray.location.asset")
-
-	ips := StringList([]string{
-		"geoip:us",
-		"geoip:cn",
-		"geoip:!cn",
-		"ext:geoiptestrouter.dat:!cn",
-		"ext:geoiptestrouter.dat:ca",
-		"ext-ip:geoiptestrouter.dat:!cn",
-		"ext-ip:geoiptestrouter.dat:!ca",
-	})
-
-	_, err = ToCidrList(ips)
-	if err != nil {
-		t.Fatalf("Failed to parse geoip list, got %s", err)
-	}
-}
 
 func TestRouterConfig(t *testing.T) {
 	createParser := func() func(string) (proto.Message, error) {
@@ -182,31 +124,27 @@ func TestRouterConfig(t *testing.T) {
 				},
 				Rule: []*router.RoutingRule{
 					{
-						Domain: []*router.Domain{
-							{
-								Type:  router.Domain_Plain,
-								Value: "baidu.com",
-							},
-							{
-								Type:  router.Domain_Plain,
-								Value: "qq.com",
-							},
+						Domain: []*geodata.DomainRule{
+							{Value: &geodata.DomainRule_Custom{Custom: &geodata.Domain{Type: geodata.Domain_Substr, Value: "baidu.com"}}},
+							{Value: &geodata.DomainRule_Custom{Custom: &geodata.Domain{Type: geodata.Domain_Substr, Value: "qq.com"}}},
 						},
 						TargetTag: &router.RoutingRule_Tag{
 							Tag: "direct",
 						},
 					},
 					{
-						Geoip: []*router.GeoIP{
+						Ip: []*geodata.IPRule{
 							{
-								Cidr: []*router.CIDR{
-									{
-										Ip:     []byte{10, 0, 0, 0},
-										Prefix: 8,
+								Value: &geodata.IPRule_Custom{
+									Custom: &geodata.CIDRRule{
+										Cidr: &geodata.CIDR{Ip: []byte{10, 0, 0, 0}, Prefix: 8},
 									},
-									{
-										Ip:     []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-										Prefix: 128,
+								},
+							},
+							{
+								Value: &geodata.IPRule_Custom{
+									Custom: &geodata.CIDRRule{
+										Cidr: &geodata.CIDR{Ip: []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Prefix: 128},
 									},
 								},
 							},
@@ -265,31 +203,27 @@ func TestRouterConfig(t *testing.T) {
 				DomainStrategy: router.Config_IpIfNonMatch,
 				Rule: []*router.RoutingRule{
 					{
-						Domain: []*router.Domain{
-							{
-								Type:  router.Domain_Plain,
-								Value: "baidu.com",
-							},
-							{
-								Type:  router.Domain_Plain,
-								Value: "qq.com",
-							},
+						Domain: []*geodata.DomainRule{
+							{Value: &geodata.DomainRule_Custom{Custom: &geodata.Domain{Type: geodata.Domain_Substr, Value: "baidu.com"}}},
+							{Value: &geodata.DomainRule_Custom{Custom: &geodata.Domain{Type: geodata.Domain_Substr, Value: "qq.com"}}},
 						},
 						TargetTag: &router.RoutingRule_Tag{
 							Tag: "direct",
 						},
 					},
 					{
-						Geoip: []*router.GeoIP{
+						Ip: []*geodata.IPRule{
 							{
-								Cidr: []*router.CIDR{
-									{
-										Ip:     []byte{10, 0, 0, 0},
-										Prefix: 8,
+								Value: &geodata.IPRule_Custom{
+									Custom: &geodata.CIDRRule{
+										Cidr: &geodata.CIDR{Ip: []byte{10, 0, 0, 0}, Prefix: 8},
 									},
-									{
-										Ip:     []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
-										Prefix: 128,
+								},
+							},
+							{
+								Value: &geodata.IPRule_Custom{
+									Custom: &geodata.CIDRRule{
+										Cidr: &geodata.CIDR{Ip: []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, Prefix: 128},
 									},
 								},
 							},
@@ -302,4 +236,41 @@ func TestRouterConfig(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestRouterScriptConfig(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		input     string
+		wantError bool
+	}{
+		{name: "script only", input: `{"script":"missing.lua"}`},
+		{name: "empty rules", input: `{"script":"missing.lua","rules":[]}`},
+		{name: "balancers", input: `{"script":"missing.lua","balancers":[{"tag":"b1","selector":["direct"]}]}`},
+		{name: "default domain strategy", input: `{"script":"missing.lua","domainStrategy":"AsIs"}`, wantError: true},
+		{name: "IP domain strategy", input: `{"script":"missing.lua","domainStrategy":"IPIfNonMatch"}`, wantError: true},
+		{name: "empty domain strategy", input: `{"script":"missing.lua","domainStrategy":""}`, wantError: true},
+		{name: "rules", input: `{"script":"missing.lua","rules":[{"outboundTag":"direct","domain":["example.com"]}]}`, wantError: true},
+		{name: "empty script", input: `{"script":"","domainStrategy":"IPOnDemand","rules":[{"outboundTag":"direct","domain":["example.com"]}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var config RouterConfig
+			if err := json.Unmarshal([]byte(test.input), &config); err != nil {
+				t.Fatal(err)
+			}
+			built, err := config.Build()
+			if test.wantError {
+				if built != nil || err == nil || !strings.Contains(err.Error(), "routing script cannot be used with domainStrategy or rules") {
+					t.Fatalf("Build() = %v, %v; want nil config and script conflict error", built, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if built.Script != config.Script || len(built.Rule) != len(config.RuleList) || len(built.BalancingRule) != len(config.Balancers) {
+				t.Fatalf("Build() did not preserve script, rules or balancers: %v", built)
+			}
+		})
+	}
 }

@@ -195,7 +195,7 @@ jobs:
           path: |
             entry/src/main/cpp/thirdparty/libxray/libs
             entry/src/main/cpp/thirdparty/libxray/include
-          key: libxray-ohos-arm64-${{ hashFiles('native/libxray/go.mod', 'native/libxray/go.sum', 'native/libxray/*.go', 'native/build_libxray.sh', 'native/tools/**', 'native/libxray/xray-core/proxy/tun/**', 'native/libxray/gvisor/pkg/tcpip/link/fdbased/endpoint.go') }}
+          key: libxray-ohos-arm64-${{ hashFiles('native/libxray/go.mod', 'native/libxray/go.sum', 'native/libxray/*.go', 'native/build_libxray.sh', 'native/tools/**', 'native/libxray/xray-core/**') }}
 
       - name: Setup host Go (for ccwrap when building libxray)
         if: steps.libxray-cache.outputs.cache-hit != 'true'

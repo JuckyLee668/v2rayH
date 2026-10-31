@@ -74,7 +74,7 @@ function buildProxyOutbound(s: ServerConfig): string {
   return body.substring(0, body.length - 1) + ',' + q('tag') + ':' + q('proxy') + '}';
 }
 
-const TUN_INBOUND: string = '{"tag":"tun-in","protocol":"tun","settings":{"name":"vpn-tun","MTU":1400,"userLevel":0}}';
+const TUN_INBOUND: string = '{"tag":"tun-in","protocol":"tun","settings":{"name":"vpn-tun","mtu":1400,"userLevel":0}}';
 const LOCAL_PROXY_INBOUND: string = '{"tag":"http-in","protocol":"http","listen":"127.0.0.1","port":10809,"settings":{"auth":"noauth"}}';
 const DIRECT_OUTBOUND: string = '{"protocol":"freedom","tag":"direct"}';
 const BLOCK_OUTBOUND: string = '{"protocol":"blackhole","tag":"block"}';
