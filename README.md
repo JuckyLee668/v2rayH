@@ -1,20 +1,29 @@
 # v2rayH
 
 [v2rayNG](https://github.com/2dust/v2rayNG) 的 HarmonyOS / OpenHarmony 移植版：
-一个 VLESS / VMess / Trojan / Shadowsocks 客户端，内置
-[Xray-core](https://github.com/xtls/xray-core) 内核，通过系统 VPN 接口接管全部流量。
+一个 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC 客户端，
+双内核设计 —— [Xray-core](https://github.com/xtls/xray-core) 永远接管 tun，
+[sing-box](https://github.com/SagerNet/sing-box) 作为可选内核经本机链式转发承载
+hy2 / tuic 等协议，通过系统 VPN 接口接管全部流量。
 
 流量路径：
 
 ```
+Xray 系节点：
 应用 ──► vpn-tun (VpnExtensionAbility) ──► 轻量用户态网络栈 (L3→L4)
       ──► Xray VLESS+REALITY 出站 ──► 互联网
+
+sing-box 系节点（hy2 / tuic / 手动指定内核）：
+应用 ──► vpn-tun ──► 用户态网络栈 ──► Xray socks 出站 (127.0.0.1:10810)
+      ──► sing-box mixed 入站 ──► Hysteria2 / TUIC 出站 ──► 互联网
 ```
 ![](intro.jpg)
 
 ## 功能特性
 
 - VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray v26.10.29 内核）
+- Hysteria2 / TUIC 协议支持（sing-box v1.14.4 内核，链式架构）
+- 每节点可手动指定运行内核（自动 / Xray / sing-box；hy2、tuic 始终走 sing-box）
 - 多订阅分组管理：每组独立链接、独立更新、独立节点列表
 - TCP Ping 延迟测速，测完可选「按延迟从低到高」排序
 - Speedtest 式下载测速：4 并发 + 预热排除慢启动 + 稳态计时段，
@@ -75,7 +84,8 @@ Releases 附带的是**未签名** HAP（原因见下文「签名」一节），
 
 ## 原生内核
 
-内核以 **c-archive** 形式构建，由 CMake 静态链接进 `libentry.so`，
+内核以 **c-archive** 形式构建（Xray-core 与 sing-box 合并进同一个 `libxray.a`，
+共享单一 Go runtime），由 CMake 静态链接进 `libentry.so`，
 因此没有需要随包分发的运行时 SONAME。
 
 构建需要两样东西：
@@ -218,3 +228,9 @@ git update-index --skip-worktree build-profile.json5
 构建与运行过程中踩过的完整坑位清单（initial-exec TLS 与 musl 的冲突、
 cgo `CC` 包装器、路由回环、CI 打包陷阱等），
 见 [`docs/build-notes.md`](docs/build-notes.md)。
+
+## 许可证
+
+本项目以 **GPL-3.0** 发布（见 [`LICENSE`](LICENSE)）：
+Xray-core 与 sing-box 均为 GPL-3.0 许可的内核，
+静态链接它们的 App 必须以相同许可证发布。

@@ -8,7 +8,8 @@ import { ServerConfig } from '../model/ServerConfig';
 import { SubGroup } from '../model/SubGroup';
 import { RoutingOptions, GeoOptions, BackupPayload } from '../model/ProxyOptions';
 import { parseSubscription } from './V2rayParser';
-import { buildXrayConfig, buildTestConfig } from './XrayConf';
+import { buildVpnConfigPair, buildTestConfigPair } from './XrayConf';
+import { usesSingboxKernel } from './SingboxConf';
 import { AppStore } from './AppStore';
 import { SubscriptionFetcher } from './SubscriptionFetcher';
 import { AppTheme } from './AppTheme';
@@ -32,9 +33,11 @@ const F_PERAPP: string = 'perapp.json';
 const F_VPN_LOG: string = 'vpn.log';
 const F_XRAY_LOG: string = 'xray_error.log';
 const F_MULTI: string = 'multi_select.json';
+const F_SINGBOX_CONFIG: string = 'singbox_config.json';
 
 const PING_TIMEOUT_MS: number = 4000;
 const PING_CONCURRENCY: number = 5;
+const CHAINED_PING_TIMEOUT_MS: number = 10000;
 
 const FAILOVER_CHECK_MS: number = 45000;
 const FAILOVER_FAIL_LIMIT: number = 2;
@@ -120,7 +123,8 @@ export class AppState {
   downloadTesting: boolean = false;
   sortPromptHandler: ((mode: string) => void) | null = null;
   coreVersion: string = '';
-  appVersion: string = '0.2.5';
+  singboxVersion: string = '';
+  appVersion: string = '0.3.0';
   exitIp: string = '';
   ipBusy: boolean = false;
   ipError: string = '';
@@ -175,6 +179,7 @@ export class AppState {
     this.ensureGeoFiles(ctx);
     this.refreshGeoSize();
     this.coreVersion = testNapi.getCoreVersion();
+    this.singboxVersion = testNapi.getSingboxVersion();
     try {
       this.appVersion = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT).versionName;
     } catch (e) {
@@ -417,12 +422,59 @@ export class AppState {
 
   // ---------- groups ----------
 
+  private normalizeServer(raw: ServerConfig): ServerConfig {
+    let s = new ServerConfig();
+    s.name = raw.name !== undefined ? raw.name : '';
+    s.protocol = raw.protocol !== undefined ? raw.protocol : '';
+    s.address = raw.address !== undefined ? raw.address : '';
+    s.port = raw.port !== undefined ? raw.port : 0;
+    s.uuid = raw.uuid !== undefined ? raw.uuid : '';
+    s.password = raw.password !== undefined ? raw.password : '';
+    s.method = raw.method !== undefined ? raw.method : '';
+    s.alterId = raw.alterId !== undefined ? raw.alterId : 0;
+    s.flow = raw.flow !== undefined ? raw.flow : '';
+    s.security = raw.security !== undefined ? raw.security : 'none';
+    s.sni = raw.sni !== undefined ? raw.sni : '';
+    s.fp = raw.fp !== undefined ? raw.fp : '';
+    s.pbk = raw.pbk !== undefined ? raw.pbk : '';
+    s.sid = raw.sid !== undefined ? raw.sid : '';
+    s.spx = raw.spx !== undefined ? raw.spx : '/';
+    s.network = raw.network !== undefined ? raw.network : 'tcp';
+    s.headerType = raw.headerType !== undefined ? raw.headerType : 'none';
+    s.path = raw.path !== undefined ? raw.path : '';
+    s.host = raw.host !== undefined ? raw.host : '';
+    s.kernel = raw.kernel !== undefined && raw.kernel.length > 0 ? raw.kernel : 'auto';
+    s.obfs = raw.obfs !== undefined ? raw.obfs : '';
+    s.obfsPassword = raw.obfsPassword !== undefined ? raw.obfsPassword : '';
+    s.insecure = raw.insecure === true;
+    s.alpn = raw.alpn !== undefined ? raw.alpn : '';
+    s.ports = raw.ports !== undefined ? raw.ports : '';
+    return s;
+  }
+
+  private normalizeGroups(groups: SubGroup[]): SubGroup[] {
+    let out: SubGroup[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      let g = groups[i];
+      let copy = new SubGroup(g.id, g.name !== undefined ? g.name : '', g.url !== undefined ? g.url : '');
+      copy.updatedAt = g.updatedAt !== undefined ? g.updatedAt : 0;
+      let rawNodes = g.nodes !== undefined ? g.nodes : [];
+      let nodes: ServerConfig[] = [];
+      for (let j = 0; j < rawNodes.length; j++) {
+        nodes.push(this.normalizeServer(rawNodes[j]));
+      }
+      copy.nodes = nodes;
+      out.push(copy);
+    }
+    return out;
+  }
+
   private loadGroups(): void {
     let text = this.store.readText(F_SUBS);
     let loaded: SubGroup[] = [];
     if (text.length > 0) {
       try {
-        loaded = JSON.parse(text) as SubGroup[];
+        loaded = this.normalizeGroups(JSON.parse(text) as SubGroup[]);
       } catch (e) {
         console.error('parse subs failed: ' + JSON.stringify(e));
         loaded = [];
@@ -432,8 +484,12 @@ export class AppState {
       let legacy: ServerConfig[] = this.store.loadServers();
       let legacyUrl: string = this.store.loadSubscriptionUrl();
       if (legacy.length > 0 || legacyUrl.length > 0) {
+        let legacyNodes: ServerConfig[] = [];
+        for (let i = 0; i < legacy.length; i++) {
+          legacyNodes.push(this.normalizeServer(legacy[i]));
+        }
         let g = new SubGroup('legacy', '默认订阅', legacyUrl);
-        g.nodes = legacy;
+        g.nodes = legacyNodes;
         g.updatedAt = 0;
         loaded.push(g);
         this.store.writeText(F_SUBS, JSON.stringify(loaded));
@@ -819,8 +875,20 @@ export class AppState {
       this.selected = 0;
     }
     let server = this.servers[this.selected];
-    let cfg = buildXrayConfig(server, XRAY_LOG_PATH, this.routingOptions());
-    this.store.saveXrayConfig(cfg);
+    let pair = buildVpnConfigPair(server, XRAY_LOG_PATH, this.routingOptions());
+    this.store.saveXrayConfig(pair.xrayConfig);
+    this.store.writeText(F_SINGBOX_CONFIG, pair.singboxConfig);
+  }
+
+  isNodeSingbox(idx: number): boolean {
+    if (idx < 0 || idx >= this.servers.length) {
+      return false;
+    }
+    return usesSingboxKernel(this.servers[idx]);
+  }
+
+  currentIsSingbox(): boolean {
+    return this.isNodeSingbox(this.selected);
   }
 
   private async startVpnWithRetry(times: number): Promise<boolean> {
@@ -882,6 +950,16 @@ export class AppState {
     this.updateGroupSubscription(this.activeGroup);
   }
 
+  private async fetchSubscriptionText(url: string): Promise<string> {
+    if (this.connected) {
+      let body = await SubscriptionFetcher.fetchThroughProxy(url, SOCKS_HOST, SOCKS_PORT, 15000, 30000);
+      if (body.length > 0) {
+        return body;
+      }
+    }
+    return SubscriptionFetcher.fetchText(url);
+  }
+
   async updateGroupSubscription(index: number): Promise<void> {
     if (this.busy) {
       return;
@@ -896,8 +974,8 @@ export class AppState {
       return;
     }
     this.busy = true;
-    this.status = '正在更新订阅: ' + name + '...';
-    let content = await SubscriptionFetcher.fetchText(url);
+    this.status = (this.connected ? '正在通过代理更新订阅: ' : '正在更新订阅: ') + name + '...';
+    let content = await this.fetchSubscriptionText(url);
     let list = parseSubscription(content);
     if (list.length === 0) {
       let reason = SubscriptionFetcher.lastError.length > 0 ? SubscriptionFetcher.lastError : '内容无法解析';
@@ -1018,10 +1096,13 @@ export class AppState {
   }
 
   private async testNodeAlive(srv: ServerConfig): Promise<boolean> {
-    let cfg: string = buildTestConfig(srv);
+    let pair = buildTestConfigPair(srv);
     let timeout: Promise<number> = sleepMs(FAILOVER_PROBE_TIMEOUT_MS).then((): number => -999);
     try {
-      let ms: number = await Promise.race([testNapi.measureDelay(cfg, 'http://www.gstatic.com/generate_204'), timeout]);
+      let ms: number = await Promise.race([
+        testNapi.measureDelay(pair.xrayConfig, pair.singboxConfig, 'http://www.gstatic.com/generate_204'),
+        timeout
+      ]);
       return ms >= 0;
     } catch (e) {
       return false;
@@ -1287,17 +1368,33 @@ export class AppState {
       let done = 0;
       for (let c = 0; c < targets.length; c += PING_CONCURRENCY) {
         let chunk: number[] = targets.slice(c, c + PING_CONCURRENCY);
-        let jobs: Promise<number>[] = [];
+        let xrayTargets: number[] = [];
+        let sbTargets: number[] = [];
         for (let j = 0; j < chunk.length; j++) {
-          jobs.push(this.tcpPingServer(this.servers[chunk[j]]));
+          if (this.isNodeSingbox(chunk[j])) {
+            sbTargets.push(chunk[j]);
+          } else {
+            xrayTargets.push(chunk[j]);
+          }
         }
-        let results: number[] = await Promise.all(jobs);
+        let jobs: Promise<number>[] = [];
+        for (let j = 0; j < xrayTargets.length; j++) {
+          jobs.push(this.tcpPingServer(this.servers[xrayTargets[j]]));
+        }
+        let xrayResults: number[] = await Promise.all(jobs);
+        let sbResults: number[] = [];
+        for (let j = 0; j < sbTargets.length; j++) {
+          sbResults.push(await this.chainedPingServer(this.servers[sbTargets[j]]));
+        }
         let copy: number[] = [];
         for (let j = 0; j < this.pings.length; j++) {
           copy.push(this.pings[j]);
         }
-        for (let j = 0; j < chunk.length; j++) {
-          copy[chunk[j]] = results[j];
+        for (let j = 0; j < xrayTargets.length; j++) {
+          copy[xrayTargets[j]] = xrayResults[j];
+        }
+        for (let j = 0; j < sbTargets.length; j++) {
+          copy[sbTargets[j]] = sbResults[j];
         }
         this.pings = copy;
         done += chunk.length;
@@ -1310,6 +1407,20 @@ export class AppState {
     }
     if (this.servers.length > 1 && this.sortPromptHandler !== null) {
       this.sortPromptHandler('ping');
+    }
+  }
+
+  private async chainedPingServer(srv: ServerConfig): Promise<number> {
+    let pair = buildTestConfigPair(srv);
+    let timeout: Promise<number> = sleepMs(CHAINED_PING_TIMEOUT_MS).then((): number => -999);
+    try {
+      let ms: number = await Promise.race([
+        testNapi.measureDelay(pair.xrayConfig, pair.singboxConfig, 'http://www.gstatic.com/generate_204'),
+        timeout
+      ]);
+      return ms >= 0 ? ms : -1;
+    } catch (e) {
+      return -1;
     }
   }
 
@@ -1339,7 +1450,7 @@ export class AppState {
         let idx = targets[c];
         let srv = this.servers[idx];
         this.status = '正在测下载 (' + (c + 1).toString() + '/' + targets.length.toString() + '): ' + srv.name;
-        let cfg: string = buildTestConfig(srv);
+        let pair = buildTestConfigPair(srv);
         let bps: number = -1;
         let urls: string[] = [
           'http://speed.cloudflare.com/__down?bytes=100000000',
@@ -1347,7 +1458,7 @@ export class AppState {
         ];
         for (let i = 0; i < urls.length; i++) {
           try {
-            bps = await testNapi.measureDownload(cfg, urls[i], 100 * 1024 * 1024);
+            bps = await testNapi.measureDownload(pair.xrayConfig, pair.singboxConfig, urls[i], 100 * 1024 * 1024);
           } catch (e) {
             bps = -1;
           }
@@ -1617,12 +1728,22 @@ export class AppState {
     this.saveGeo();
   }
 
+  private async fetchGeoBytes(url: string): Promise<ArrayBuffer | undefined> {
+    if (this.connected) {
+      let data = await SubscriptionFetcher.fetchBytesThroughProxy(url, SOCKS_HOST, SOCKS_PORT);
+      if (data !== undefined) {
+        return data;
+      }
+    }
+    return SubscriptionFetcher.fetchBytes(url);
+  }
+
   async updateGeoFiles(): Promise<void> {
     if (this.busy) {
       return;
     }
     this.busy = true;
-    this.status = '正在下载资源文件...';
+    this.status = this.connected ? '正在通过代理下载资源文件...' : '正在下载资源文件...';
     let dir = this.store.dirPath() + '/geo';
     try {
       if (!fs.accessSync(dir)) {
@@ -1636,13 +1757,13 @@ export class AppState {
     let okSite = false;
     let okIp = false;
     if (this.geoUrlGeosite.length > 0) {
-      let data = await SubscriptionFetcher.fetchBytes(this.geoUrlGeosite);
+      let data = await this.fetchGeoBytes(this.geoUrlGeosite);
       if (data !== undefined) {
         okSite = this.store.writeBytesTo(dir + '/geosite.dat', data);
       }
     }
     if (this.geoUrlGeoip.length > 0) {
-      let data = await SubscriptionFetcher.fetchBytes(this.geoUrlGeoip);
+      let data = await this.fetchGeoBytes(this.geoUrlGeoip);
       if (data !== undefined) {
         okIp = this.store.writeBytesTo(dir + '/geoip.dat', data);
       }
@@ -1868,7 +1989,7 @@ export class AppState {
   }
 
   private applyBackup(b: BackupPayload): void {
-    let groups: SubGroup[] = b.groups !== undefined ? b.groups : [];
+    let groups: SubGroup[] = b.groups !== undefined ? this.normalizeGroups(b.groups) : [];
     this.groups = groups;
     this.saveGroups();
     let active = b.activeGroup;
@@ -1906,7 +2027,14 @@ export class AppState {
       this.geoUpdatedAt = b.geo.updatedAt;
       this.saveGeo();
     }
-    this.status = '还原完成，共 ' + groups.length.toString() + ' 个分组';
+    let nodeCount = 0;
+    for (let i = 0; i < groups.length; i++) {
+      let nodes = groups[i].nodes;
+      if (nodes !== undefined) {
+        nodeCount += nodes.length;
+      }
+    }
+    this.status = '还原完成，共 ' + groups.length.toString() + ' 个分组、' + nodeCount.toString() + ' 个节点';
   }
 
   clearAll(): void {

@@ -101,6 +101,30 @@ export function buildShareLink(s: ServerConfig): string {
     return 'ss://' + b64Encode(method + ':' + s.password)
       + '@' + s.address + ':' + s.port.toString() + '#' + encodeURIComponent(defaultNodeName(s));
   }
+  if (s.protocol === 'hy2') {
+    let q: string[] = [];
+    appendParam(q, 'sni', s.sni);
+    if (s.insecure) {
+      q.push('insecure=1');
+    }
+    appendParam(q, 'obfs', s.obfs);
+    appendParam(q, 'obfs-password', s.obfsPassword);
+    appendParam(q, 'alpn', s.alpn);
+    appendParam(q, 'mport', s.ports);
+    return 'hy2://' + encodeURIComponent(s.password) + '@' + s.address + ':' + s.port.toString()
+      + (q.length > 0 ? ('?' + q.join('&')) : '') + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'tuic') {
+    let q: string[] = [];
+    appendParam(q, 'sni', s.sni);
+    appendParam(q, 'alpn', s.alpn);
+    if (s.insecure) {
+      q.push('allow_insecure=1');
+    }
+    return 'tuic://' + s.uuid + ':' + encodeURIComponent(s.password) + '@' + s.address + ':'
+      + s.port.toString() + (q.length > 0 ? ('?' + q.join('&')) : '')
+      + '#' + encodeURIComponent(defaultNodeName(s));
+  }
   return '';
 }
 
@@ -257,6 +281,73 @@ function parseSs(link: string): ServerConfig | undefined {
   return s;
 }
 
+function parseHy2(link: string, scheme: string): ServerConfig | undefined {
+  let parts = splitName(link, scheme.length);
+  let atIdx = parts[0].lastIndexOf('@');
+  if (atIdx < 0) {
+    return undefined;
+  }
+  let s = new ServerConfig();
+  s.protocol = 'hy2';
+  s.password = decodeURIComponent(parts[0].substring(0, atIdx));
+  let hp = parseHostPort(parts[0].substring(atIdx + 1));
+  s.address = hp[0];
+  s.port = parseInt(hp[1], 10);
+  s.name = parts[2].length > 0 ? parts[2] : (s.address + ':' + s.port.toString());
+  s.security = 'tls';
+  s.sni = getParam(parts[1], 'sni');
+  if (s.sni.length === 0) {
+    s.sni = getParam(parts[1], 'peer');
+  }
+  let ins = getParam(parts[1], 'insecure');
+  if (ins === '1' || ins === 'true') {
+    s.insecure = true;
+  }
+  s.obfs = getParam(parts[1], 'obfs');
+  s.obfsPassword = getParam(parts[1], 'obfs-password');
+  if (s.obfsPassword.length === 0) {
+    s.obfsPassword = getParam(parts[1], 'obfs-param');
+  }
+  s.alpn = getParam(parts[1], 'alpn');
+  s.ports = getParam(parts[1], 'mport');
+  if (s.ports.length === 0) {
+    s.ports = getParam(parts[1], 'ports');
+  }
+  return s;
+}
+
+function parseTuic(link: string): ServerConfig | undefined {
+  let parts = splitName(link, 'tuic://'.length);
+  let atIdx = parts[0].lastIndexOf('@');
+  if (atIdx < 0) {
+    return undefined;
+  }
+  let userinfo = decodeURIComponent(parts[0].substring(0, atIdx));
+  let colonIdx = userinfo.indexOf(':');
+  let s = new ServerConfig();
+  s.protocol = 'tuic';
+  s.uuid = colonIdx >= 0 ? userinfo.substring(0, colonIdx) : userinfo;
+  s.password = colonIdx >= 0 ? userinfo.substring(colonIdx + 1) : '';
+  let hp = parseHostPort(parts[0].substring(atIdx + 1));
+  s.address = hp[0];
+  s.port = parseInt(hp[1], 10);
+  s.name = parts[2].length > 0 ? parts[2] : (s.address + ':' + s.port.toString());
+  s.security = 'tls';
+  s.sni = getParam(parts[1], 'sni');
+  if (s.sni.length === 0) {
+    s.sni = getParam(parts[1], 'peer');
+  }
+  s.alpn = getParam(parts[1], 'alpn');
+  let ins = getParam(parts[1], 'allow_insecure');
+  if (ins.length === 0) {
+    ins = getParam(parts[1], 'insecure');
+  }
+  if (ins === '1' || ins === 'true') {
+    s.insecure = true;
+  }
+  return s;
+}
+
 export function parseShareLink(link: string): ServerConfig | undefined {
   let l = link.trim();
   if (l.startsWith('vless://')) {
@@ -270,6 +361,15 @@ export function parseShareLink(link: string): ServerConfig | undefined {
   }
   if (l.startsWith('ss://')) {
     return parseSs(l);
+  }
+  if (l.startsWith('hy2://')) {
+    return parseHy2(l, 'hy2://');
+  }
+  if (l.startsWith('hysteria2://')) {
+    return parseHy2(l, 'hysteria2://');
+  }
+  if (l.startsWith('tuic://')) {
+    return parseTuic(l);
   }
   return undefined;
 }

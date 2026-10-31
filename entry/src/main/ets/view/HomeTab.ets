@@ -1,5 +1,6 @@
 import { AppState } from '../common/AppState';
 import { AppTheme } from '../common/AppTheme';
+import { usesSingboxKernel } from '../common/SingboxConf';
 import { ServerConfig } from '../model/ServerConfig';
 
 @Component
@@ -354,13 +355,25 @@ export struct HomeTab {
       }
 
       Column() {
-        Text(item.name)
-          .fontSize(15)
-          .fontWeight(this.app.selected === idx ? FontWeight.Medium : FontWeight.Normal)
-          .fontColor(this.app.selected === idx ? AppTheme.PRIMARY : AppTheme.TEXT)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+        Row({ space: 6 }) {
+          Text(item.name)
+            .fontSize(15)
+            .fontWeight(this.app.selected === idx ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.app.selected === idx ? AppTheme.PRIMARY : AppTheme.TEXT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          if (usesSingboxKernel(item)) {
+            Text('SB')
+              .fontSize(9)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.app.selected === idx ? AppTheme.PRIMARY : AppTheme.TEXT_SUB)
+              .backgroundColor(AppTheme.CHIP_BG)
+              .borderRadius(5)
+              .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+          }
+        }
+        .width('100%')
         Text(item.protocol + ' · ' + item.address + ':' + item.port.toString())
           .fontSize(11)
           .fontColor(AppTheme.TEXT_SUB)

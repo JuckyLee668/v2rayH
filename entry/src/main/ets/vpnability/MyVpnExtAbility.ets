@@ -17,6 +17,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
   private vpnConnection: vpnExtension.VpnConnection | undefined = undefined;
   private logFile: string = '';
   private configFile: string = '';
+  private singboxConfigFile: string = '';
 
   private log(msg: string): void {
     console.info('MyVpnExtAbility: ' + msg);
@@ -31,24 +32,28 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     }
   }
 
-  private readConfig(): string {
+  private readConfigFile(path: string): string {
     try {
-      if (!fs.accessSync(this.configFile)) {
+      if (!fs.accessSync(path)) {
         return '';
       }
-      let stat = fs.statSync(this.configFile);
+      let stat = fs.statSync(path);
       if (stat.size === 0) {
         return '';
       }
-      let f = fs.openSync(this.configFile, fs.OpenMode.READ_ONLY);
+      let f = fs.openSync(path, fs.OpenMode.READ_ONLY);
       let buf = new ArrayBuffer(stat.size);
       fs.readSync(f.fd, buf);
       fs.closeSync(f);
       return buffer.from(buf).toString('utf-8');
     } catch (e) {
-      this.log('readConfig failed: ' + JSON.stringify(e));
+      this.log('readConfigFile failed: ' + JSON.stringify(e));
       return '';
     }
+  }
+
+  private readConfig(): string {
+    return this.readConfigFile(this.configFile);
   }
 
   private rotateLog(): void {
@@ -88,6 +93,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     try {
       this.logFile = this.context.filesDir + '/vpn.log';
       this.configFile = this.context.filesDir + '/xray_config.json';
+      this.singboxConfigFile = this.context.filesDir + '/singbox_config.json';
     } catch (e) {
       this.logFile = '';
     }
@@ -99,6 +105,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
   onDestroy(): void {
     this.log('=== onDestroy ===');
     testNapi.stopVpn();
+    testNapi.stopSingbox();
     if (this.vpnConnection) {
       this.vpnConnection.destroy().then(() => {
         this.log('vpn destroy success');
@@ -137,6 +144,8 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
       this.log('no xray config, abort');
       return;
     }
+    let singboxConfig = this.readConfigFile(this.singboxConfigFile);
+    this.log('singbox config length=' + singboxConfig.length.toString());
 
     this.vpnConnection = vpnExtension.createVpnConnection(this.context);
     this.log('connection created');
@@ -198,13 +207,13 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
       if (conn) {
         if (conn.protectProcessNet !== undefined) {
           conn.protectProcessNet().then(() => {
-            this.startKernel(fd, xrayConfig);
+            this.startKernel(fd, xrayConfig, singboxConfig);
           }).catch((err: Error) => {
             this.log('protectProcessNet failed: ' + JSON.stringify(err));
-            this.startKernel(fd, xrayConfig);
+            this.startKernel(fd, xrayConfig, singboxConfig);
           });
         } else {
-          this.startKernel(fd, xrayConfig);
+          this.startKernel(fd, xrayConfig, singboxConfig);
         }
       }
     }).catch((err: Error) => {
@@ -212,7 +221,15 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     });
   }
 
-  private startKernel(fd: number, xrayConfig: string): void {
+  private startKernel(fd: number, xrayConfig: string, singboxConfig: string): void {
+    if (singboxConfig.length > 0) {
+      let sbCode: number = testNapi.startSingbox(singboxConfig);
+      this.log('startSingbox code=' + sbCode.toString() + ' sbErr=' + testNapi.getSingboxError());
+      if (sbCode !== 0) {
+        this.log('sing-box start failed, abort vpn start');
+        return;
+      }
+    }
     let code: number = testNapi.startVpnTun(fd, xrayConfig, this.context.filesDir + '/geo');
     this.log('startVpnTun code=' + code.toString() + ' lastErr=' + testNapi.getLastError());
   }

@@ -1,9 +1,21 @@
 import { ServerConfig } from '../model/ServerConfig';
 import { RoutingOptions } from '../model/ProxyOptions';
+import { usesSingboxKernel, buildVpnSingboxConfig, buildTestSingboxConfig, VPN_SINGBOX_PORT, TEST_SINGBOX_PORT } from './SingboxConf';
 
 function q(s: string): string {
   let r = s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   return '"' + r + '"';
+}
+
+export class ConfigPair {
+  xrayConfig: string = '';
+  singboxConfig: string = '';
+}
+
+export function buildSocksProxyOutbound(addr: string, port: number): string {
+  let server = '{' + q('address') + ':' + q(addr) + ',' + q('port') + ':' + port.toString() + '}';
+  return '{' + q('protocol') + ':' + q('socks') + ',' + q('settings') + ':{' + q('servers') + ':[' + server + ']}'
+    + ',' + q('tag') + ':' + q('proxy') + '}';
 }
 
 function buildStreamSettings(s: ServerConfig): string {
@@ -127,13 +139,25 @@ export function buildTestConfig(server: ServerConfig): string {
   return '{' + q('outbounds') + ':[' + buildProxyOutbound(server) + ']}';
 }
 
-export function buildXrayConfig(server: ServerConfig, logErrorPath: string, routing: RoutingOptions): string {
+export function buildTestConfigPair(server: ServerConfig): ConfigPair {
+  let pair = new ConfigPair();
+  if (usesSingboxKernel(server)) {
+    pair.xrayConfig = '{' + q('outbounds') + ':['
+      + buildSocksProxyOutbound('127.0.0.1', TEST_SINGBOX_PORT) + ']}';
+    pair.singboxConfig = buildTestSingboxConfig(server);
+  } else {
+    pair.xrayConfig = buildTestConfig(server);
+  }
+  return pair;
+}
+
+function buildVpnXrayConfig(proxyOutbound: string, logErrorPath: string, routing: RoutingOptions): string {
   let logCfg = '{' + q('loglevel') + ':' + q('error');
   if (logErrorPath.length > 0) {
     logCfg += ',' + q('error') + ':' + q(logErrorPath);
   }
   logCfg += '}';
-  let outbounds = buildProxyOutbound(server) + ',' + DIRECT_OUTBOUND;
+  let outbounds = proxyOutbound + ',' + DIRECT_OUTBOUND;
   if (routing.blockAds) {
     outbounds += ',' + BLOCK_OUTBOUND;
   }
@@ -142,4 +166,20 @@ export function buildXrayConfig(server: ServerConfig, logErrorPath: string, rout
     + ',' + q('outbounds') + ':[' + outbounds + ']'
     + ',' + q('routing') + ':' + buildRouting(routing)
     + '}';
+}
+
+export function buildXrayConfig(server: ServerConfig, logErrorPath: string, routing: RoutingOptions): string {
+  return buildVpnXrayConfig(buildProxyOutbound(server), logErrorPath, routing);
+}
+
+export function buildVpnConfigPair(server: ServerConfig, logErrorPath: string, routing: RoutingOptions): ConfigPair {
+  let pair = new ConfigPair();
+  if (usesSingboxKernel(server)) {
+    pair.xrayConfig = buildVpnXrayConfig(buildSocksProxyOutbound('127.0.0.1', VPN_SINGBOX_PORT),
+      logErrorPath, routing);
+    pair.singboxConfig = buildVpnSingboxConfig(server);
+  } else {
+    pair.xrayConfig = buildXrayConfig(server, logErrorPath, routing);
+  }
+  return pair;
 }

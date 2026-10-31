@@ -18,4 +18,10 @@ export class ServerConfig {
   headerType: string = 'none';
   path: string = '';
   host: string = '';
+  kernel: string = 'auto'; // 'auto' | 'xray' | 'singbox'
+  obfs: string = '';
+  obfsPassword: string = '';
+  insecure: boolean = false;
+  alpn: string = '';
+  ports: string = '';
 }

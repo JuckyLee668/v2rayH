@@ -118,9 +118,18 @@ func StopVpn() C.int {
 }
 
 //export MeasureDelay
-func MeasureDelay(configJSON *C.char, testURL *C.char) C.longlong {
+func MeasureDelay(configJSON *C.char, singboxJSON *C.char, testURL *C.char) C.longlong {
 	cfg := C.GoString(configJSON)
+	sbCfg := C.GoString(singboxJSON)
 	urlStr := C.GoString(testURL)
+	if sbCfg != "" {
+		sbInst, err := startSingboxInstance(sbCfg)
+		if err != nil {
+			vpnLog("measure delay sing-box start failed: " + err.Error())
+			return C.longlong(-1)
+		}
+		defer sbInst.Close()
+	}
 	inst, err := core.StartInstance("json", []byte(cfg))
 	if err != nil {
 		vpnLog("measure delay start failed: " + err.Error())
@@ -149,12 +158,21 @@ func MeasureDelay(configJSON *C.char, testURL *C.char) C.longlong {
 }
 
 //export MeasureDownload
-func MeasureDownload(configJSON *C.char, testURL *C.char, maxBytes C.longlong) C.double {
+func MeasureDownload(configJSON *C.char, singboxJSON *C.char, testURL *C.char, maxBytes C.longlong) C.double {
 	cfg := C.GoString(configJSON)
+	sbCfg := C.GoString(singboxJSON)
 	urlStr := C.GoString(testURL)
 	limit := int64(maxBytes)
 	if limit <= 0 {
 		limit = 40 * 1024 * 1024
+	}
+	if sbCfg != "" {
+		sbInst, err := startSingboxInstance(sbCfg)
+		if err != nil {
+			vpnLog("measure download sing-box start failed: " + err.Error())
+			return C.double(-1)
+		}
+		defer sbInst.Close()
 	}
 	inst, err := core.StartInstance("json", []byte(cfg))
 	if err != nil {

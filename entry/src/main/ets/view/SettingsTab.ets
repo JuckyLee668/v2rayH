@@ -179,9 +179,11 @@ export struct SettingsTab {
         this.dividerLine()
         this.infoRow('版本', this.app.appVersion)
         this.dividerLine()
-        this.infoRow('内核', 'libxray (Xray-core)')
+        this.infoRow('内核', 'libxray (Xray-core + sing-box)')
         this.dividerLine()
-        this.infoRow('内核版本', this.app.coreVersion.length > 0 ? this.app.coreVersion : '未知')
+        this.infoRow('Xray 版本', this.app.coreVersion.length > 0 ? this.app.coreVersion : '未知')
+        this.dividerLine()
+        this.infoRow('sing-box 版本', this.app.singboxVersion.length > 0 ? this.app.singboxVersion : '未知')
         this.dividerLine()
         this.infoRow('目标 SDK', this.app.apiLevel())
       }
@@ -191,12 +193,12 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('内核版本取自 libxray.so 链接的 github.com/xtls/xray-core 模块版本（编译期写入，运行时为 Xray 26.10.29）。')
+      Text('双内核：Xray 负责 tun 接管与路由；hy2 / tuic 等协议由 sing-box 经本机链式转发承载，版本号在编译期写入。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')
         .margin({ top: 12, left: 4 })
-        .maxLines(3)
+        .maxLines(4)
 
       Text('订阅与节点仅保存在本机，不会上传')
         .fontSize(11)
@@ -260,6 +262,79 @@ export struct SettingsTab {
     })
   }
 
+  private toastResult(): void {
+    let msg = this.app.status;
+    if (msg.length === 0) {
+      return;
+    }
+    this.getUIContext().getPromptAction().showToast({
+      message: msg,
+      duration: 2000,
+      bottom: '35%'
+    });
+  }
+
+  private confirmRestoreFile(): void {
+    AlertDialog.show({
+      title: '从文件还原',
+      message: '还原会覆盖当前的订阅分组、节点与路由设置，确定继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '还原',
+        fontColor: AppTheme.DANGER,
+        action: () => {
+          this.app.importBackup().then(() => {
+            this.toastResult();
+          });
+        }
+      }
+    });
+  }
+
+  private confirmRestoreSnapshot(): void {
+    AlertDialog.show({
+      title: '还原本地快照',
+      message: '将使用最近一次导出的本机快照覆盖当前配置，确定继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '还原',
+        fontColor: AppTheme.DANGER,
+        action: () => {
+          this.app.restoreSnapshot();
+          this.toastResult();
+        }
+      }
+    });
+  }
+
+  private confirmClearAll(): void {
+    AlertDialog.show({
+      title: '清空本地节点与订阅',
+      message: '将删除本机保存的全部分组与节点，不可恢复（已导出的备份文件不受影响）。确定继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '清空',
+        fontColor: AppTheme.DANGER,
+        action: () => {
+          this.app.clearAll();
+          this.toastResult();
+        }
+      }
+    });
+  }
+
   @Builder
   backupPage() {
     Column() {
@@ -269,12 +344,12 @@ export struct SettingsTab {
         })
         Divider().strokeWidth(1).color(AppTheme.DIVIDER).margin({ left: 16, right: 16 })
         this.actionRow($r('sys.symbol.doc_plaintext'), '从文件还原', '选择备份文件并覆盖当前配置', false, () => {
-          this.app.importBackup();
+          this.confirmRestoreFile();
         })
         if (this.app.hasLocalSnapshot()) {
           Divider().strokeWidth(1).color(AppTheme.DIVIDER).margin({ left: 16, right: 16 })
           this.actionRow($r('sys.symbol.arrow_counterclockwise'), '还原本地快照', '使用最近一次导出的本机快照', false, () => {
-            this.app.restoreSnapshot();
+            this.confirmRestoreSnapshot();
           })
         }
       }
@@ -303,7 +378,7 @@ export struct SettingsTab {
 
       Column() {
         this.actionRow($r('sys.symbol.trash'), '清空本地节点与订阅', '删除本机保存的全部节点，不可恢复', true, () => {
-          this.app.clearAll();
+          this.confirmClearAll();
         })
       }
       .width('100%')

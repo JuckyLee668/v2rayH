@@ -4,6 +4,7 @@ import { scanBarcode } from '@kit.ScanKit';
 import { AppState } from '../common/AppState';
 import { AppTheme } from '../common/AppTheme';
 import { parseSubscription, buildShareLink } from '../common/V2rayParser';
+import { usesSingboxKernel } from '../common/SingboxConf';
 import { ServerConfig } from '../model/ServerConfig';
 import { SubGroup } from '../model/SubGroup';
 import { ShareSheet } from './ShareSheet';
@@ -41,6 +42,7 @@ export struct ConfigTab {
   @State eAddress: string = '';
   @State ePort: string = '';
   @State eCredential: string = '';
+  @State eKernel: string = 'auto';
   @State quickLinkDraft: string = '';
   @State advancedOpen: boolean = false;
   @State directDraft: string = '';
@@ -768,6 +770,7 @@ export struct ConfigTab {
     this.eAddress = s.address;
     this.ePort = s.port.toString();
     this.eCredential = s.protocol === 'vless' || s.protocol === 'vmess' ? s.uuid : s.password;
+    this.eKernel = s.kernel !== undefined && s.kernel.length > 0 ? s.kernel : 'auto';
     this.editIdx = idx;
   }
 
@@ -780,6 +783,21 @@ export struct ConfigTab {
       }
     }
     return '密码';
+  }
+
+  private editKernelEffective(): boolean {
+    if (this.eKernel === 'singbox') {
+      return true;
+    }
+    if (this.eKernel === 'xray') {
+      return false;
+    }
+    let nodes = this.groupNodes();
+    if (this.editIdx < 0 || this.editIdx >= nodes.length) {
+      return false;
+    }
+    let p: string = nodes[this.editIdx].protocol;
+    return p === 'hy2' || p === 'tuic';
   }
 
   private saveNodeEdit(): void {
@@ -807,6 +825,7 @@ export struct ConfigTab {
         s.password = cred;
       }
     }
+    s.kernel = this.eKernel;
     this.app.updateGroupNode(this.nodeGroupIdx, idx, s);
     this.editIdx = -1;
   }
@@ -824,6 +843,28 @@ export struct ConfigTab {
     this.shareText = link;
     this.shareTitle = '分享节点';
     this.showShare = true;
+  }
+
+  private confirmUpdateGeo(): void {
+    if (this.app.connected) {
+      this.app.updateGeoFiles();
+      return;
+    }
+    AlertDialog.show({
+      title: '未连接代理',
+      message: '资源文件需要通过代理下载。当前未连接 VPN，将使用直连下载，境外资源可能失败。仍要继续？',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '继续下载',
+        action: () => {
+          this.app.updateGeoFiles();
+        }
+      }
+    });
   }
 
   private confirmRemoveNode(idx: number): void {
@@ -853,13 +894,25 @@ export struct ConfigTab {
   groupNodeRow(item: ServerConfig, idx: number) {
     Row() {
       Column() {
-        Text(item.name)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppTheme.TEXT)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+        Row({ space: 6 }) {
+          Text(item.name)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppTheme.TEXT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          if (usesSingboxKernel(item)) {
+            Text('SB')
+              .fontSize(9)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppTheme.PRIMARY)
+              .backgroundColor(AppTheme.PRIMARY_SOFT)
+              .borderRadius(5)
+              .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+          }
+        }
+        .width('100%')
         Text(item.protocol + ' · ' + item.address + ':' + item.port.toString())
           .fontSize(11)
           .fontColor(AppTheme.TEXT_SUB)
@@ -937,6 +990,41 @@ export struct ConfigTab {
               this.eCredential = v;
             }
           })
+
+          Row() {
+            Text('运行内核')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(AppTheme.TEXT)
+            Blank()
+            if (this.eKernel === 'auto') {
+              Text(this.editIdx >= 0 && this.editKernelEffective() ? '自动 · sing-box' : '自动 · Xray')
+                .fontSize(11)
+                .fontColor(AppTheme.TEXT_WEAK)
+            }
+          }
+          .width('100%')
+          .margin({ top: 14 })
+
+          Flex({ wrap: FlexWrap.Wrap }) {
+            CfgChoiceChip({ label: '自动', active: this.eKernel === 'auto', onPick: () => {
+              this.eKernel = 'auto';
+            } })
+            CfgChoiceChip({ label: 'Xray', active: this.eKernel === 'xray', onPick: () => {
+              this.eKernel = 'xray';
+            } })
+            CfgChoiceChip({ label: 'sing-box', active: this.eKernel === 'singbox', onPick: () => {
+              this.eKernel = 'singbox';
+            } })
+          }
+          .width('100%')
+          .margin({ top: 4 })
+
+          Text('hy2 / tuic 节点始终由 sing-box 承载；其余协议可在此手动指定内核')
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_WEAK)
+            .width('100%')
+            .margin({ top: 6 })
         }
         .width('100%')
         .padding(16)
@@ -1758,7 +1846,7 @@ export struct ConfigTab {
               .borderRadius(15)
               .enabled(!this.app.busy)
               .onClick(() => {
-                this.app.updateGeoFiles();
+                this.confirmUpdateGeo();
               })
           }
           .width('100%')

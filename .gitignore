@@ -25,3 +25,4 @@
 # staged release artifacts (scripts/release.ps1)
 /dist/
 /entry/libs/
+/.deveco/

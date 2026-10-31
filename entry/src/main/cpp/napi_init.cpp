@@ -2,6 +2,16 @@
 #include "libxray.h"
 
 #define XRAY_CORE_VERSION "v1.261029.0"
+#define SINGBOX_CORE_VERSION "sing-box v1.14.4"
+
+static char *CopyStringArg(napi_env env, napi_value value)
+{
+    size_t len = 0;
+    napi_get_value_string_utf8(env, value, nullptr, 0, &len);
+    char *buf = new char[len + 1];
+    napi_get_value_string_utf8(env, value, buf, len + 1, &len);
+    return buf;
+}
 
 static napi_value NativeStartXray(napi_env env, napi_callback_info info)
 {
@@ -9,10 +19,7 @@ static napi_value NativeStartXray(napi_env env, napi_callback_info info)
     napi_value args[1] = { nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
-    size_t len = 0;
-    napi_get_value_string_utf8(env, args[0], nullptr, 0, &len);
-    char *buf = new char[len + 1];
-    napi_get_value_string_utf8(env, args[0], buf, len + 1, &len);
+    char *buf = CopyStringArg(env, args[0]);
 
     int result = StartXray(buf);
     delete[] buf;
@@ -65,15 +72,8 @@ static napi_value NativeStartVpnTun(napi_env env, napi_callback_info info)
     int32_t fd = 0;
     napi_get_value_int32(env, args[0], &fd);
 
-    size_t len1 = 0;
-    napi_get_value_string_utf8(env, args[1], nullptr, 0, &len1);
-    char *cfg = new char[len1 + 1];
-    napi_get_value_string_utf8(env, args[1], cfg, len1 + 1, &len1);
-
-    size_t len2 = 0;
-    napi_get_value_string_utf8(env, args[2], nullptr, 0, &len2);
-    char *assets = new char[len2 + 1];
-    napi_get_value_string_utf8(env, args[2], assets, len2 + 1, &len2);
+    char *cfg = CopyStringArg(env, args[1]);
+    char *assets = CopyStringArg(env, args[2]);
 
     int result = StartVpnTun((int)fd, cfg, assets);
     delete[] cfg;
@@ -93,10 +93,61 @@ static napi_value NativeStopVpn(napi_env env, napi_callback_info info)
     return ret;
 }
 
+static napi_value NativeStartSingbox(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    char *buf = CopyStringArg(env, args[0]);
+
+    int result = StartSingbox(buf);
+    delete[] buf;
+
+    napi_value ret;
+    napi_create_int32(env, result, &ret);
+    return ret;
+}
+
+static napi_value NativeStopSingbox(napi_env env, napi_callback_info info)
+{
+    int result = StopSingbox();
+
+    napi_value ret;
+    napi_create_int32(env, result, &ret);
+    return ret;
+}
+
+static napi_value NativeIsSingboxRunning(napi_env env, napi_callback_info info)
+{
+    int result = IsSingboxRunning();
+
+    napi_value ret;
+    napi_create_int32(env, result, &ret);
+    return ret;
+}
+
+static napi_value NativeGetSingboxVersion(napi_env env, napi_callback_info info)
+{
+    napi_value ret;
+    napi_create_string_utf8(env, SINGBOX_CORE_VERSION, NAPI_AUTO_LENGTH, &ret);
+    return ret;
+}
+
+static napi_value NativeGetSingboxError(napi_env env, napi_callback_info info)
+{
+    char *msg = GetSingboxError();
+
+    napi_value ret;
+    napi_create_string_utf8(env, msg != nullptr ? msg : "", NAPI_AUTO_LENGTH, &ret);
+    return ret;
+}
+
 struct DelayWork {
     napi_async_work work;
     napi_deferred deferred;
     char *cfg;
+    char *singboxCfg;
     char *url;
     int64_t result;
 };
@@ -104,7 +155,7 @@ struct DelayWork {
 static void DelayExecute(napi_env env, void *data)
 {
     DelayWork *w = static_cast<DelayWork *>(data);
-    w->result = MeasureDelay(w->cfg, w->url);
+    w->result = MeasureDelay(w->cfg, w->singboxCfg, w->url);
 }
 
 static void DelayComplete(napi_env env, napi_status status, void *data)
@@ -115,28 +166,24 @@ static void DelayComplete(napi_env env, napi_status status, void *data)
     napi_resolve_deferred(env, w->deferred, result);
     napi_delete_async_work(env, w->work);
     delete[] w->cfg;
+    delete[] w->singboxCfg;
     delete[] w->url;
     delete w;
 }
 
 static napi_value NativeMeasureDelay(napi_env env, napi_callback_info info)
 {
-    size_t argc = 2;
-    napi_value args[2] = { nullptr, nullptr };
+    size_t argc = 3;
+    napi_value args[3] = { nullptr, nullptr, nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
-    size_t len1 = 0;
-    napi_get_value_string_utf8(env, args[0], nullptr, 0, &len1);
-    char *cfg = new char[len1 + 1];
-    napi_get_value_string_utf8(env, args[0], cfg, len1 + 1, &len1);
-
-    size_t len2 = 0;
-    napi_get_value_string_utf8(env, args[1], nullptr, 0, &len2);
-    char *url = new char[len2 + 1];
-    napi_get_value_string_utf8(env, args[1], url, len2 + 1, &len2);
+    char *cfg = CopyStringArg(env, args[0]);
+    char *singboxCfg = CopyStringArg(env, args[1]);
+    char *url = CopyStringArg(env, args[2]);
 
     DelayWork *w = new DelayWork();
     w->cfg = cfg;
+    w->singboxCfg = singboxCfg;
     w->url = url;
     w->result = -1;
 
@@ -155,6 +202,7 @@ struct DownloadWork {
     napi_async_work work;
     napi_deferred deferred;
     char *cfg;
+    char *singboxCfg;
     char *url;
     int64_t maxBytes;
     double result;
@@ -163,7 +211,7 @@ struct DownloadWork {
 static void DownloadExecute(napi_env env, void *data)
 {
     DownloadWork *w = static_cast<DownloadWork *>(data);
-    w->result = MeasureDownload(w->cfg, w->url, w->maxBytes);
+    w->result = MeasureDownload(w->cfg, w->singboxCfg, w->url, w->maxBytes);
 }
 
 static void DownloadComplete(napi_env env, napi_status status, void *data)
@@ -174,31 +222,27 @@ static void DownloadComplete(napi_env env, napi_status status, void *data)
     napi_resolve_deferred(env, w->deferred, result);
     napi_delete_async_work(env, w->work);
     delete[] w->cfg;
+    delete[] w->singboxCfg;
     delete[] w->url;
     delete w;
 }
 
 static napi_value NativeMeasureDownload(napi_env env, napi_callback_info info)
 {
-    size_t argc = 3;
-    napi_value args[3] = { nullptr, nullptr, nullptr };
+    size_t argc = 4;
+    napi_value args[4] = { nullptr, nullptr, nullptr, nullptr };
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
 
-    size_t len1 = 0;
-    napi_get_value_string_utf8(env, args[0], nullptr, 0, &len1);
-    char *cfg = new char[len1 + 1];
-    napi_get_value_string_utf8(env, args[0], cfg, len1 + 1, &len1);
-
-    size_t len2 = 0;
-    napi_get_value_string_utf8(env, args[1], nullptr, 0, &len2);
-    char *url = new char[len2 + 1];
-    napi_get_value_string_utf8(env, args[1], url, len2 + 1, &len2);
+    char *cfg = CopyStringArg(env, args[0]);
+    char *singboxCfg = CopyStringArg(env, args[1]);
+    char *url = CopyStringArg(env, args[2]);
 
     int64_t maxBytes = 0;
-    napi_get_value_int64(env, args[2], &maxBytes);
+    napi_get_value_int64(env, args[3], &maxBytes);
 
     DownloadWork *w = new DownloadWork();
     w->cfg = cfg;
+    w->singboxCfg = singboxCfg;
     w->url = url;
     w->maxBytes = maxBytes;
     w->result = -1;
@@ -227,6 +271,11 @@ static napi_value Init(napi_env env, napi_value exports)
         { "stopVpn", nullptr, NativeStopVpn, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "measureDelay", nullptr, NativeMeasureDelay, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "measureDownload", nullptr, NativeMeasureDownload, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "startSingbox", nullptr, NativeStartSingbox, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "stopSingbox", nullptr, NativeStopSingbox, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "isSingboxRunning", nullptr, NativeIsSingboxRunning, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "getSingboxVersion", nullptr, NativeGetSingboxVersion, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "getSingboxError", nullptr, NativeGetSingboxError, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
