@@ -43,9 +43,9 @@ Releases 附带的是**未签名** HAP（原因见下文「签名」一节），
 
 ### 方法一：小白调试助手（无需电脑）
 
-1. 手机浏览器打开 [Releases](https://github.com/JuckyLee668/v2rayH/releases) 页面，
+1. 打开 [Releases](https://github.com/JuckyLee668/v2rayH/releases) 页面，
    下载最新的 `v2rayH-<版本>-unsigned.hap`（可一并下载 `.sha256` 用于校验）。
-2. 在华为应用市场搜索「小白调试助手」安装（或从其官方发布渠道获取）。
+2. [「小白调试助手」下载](https://github.com/likuai2010/auto-installer/releases/tag/3.1.0)。
 3. 打开小白调试助手，选择安装应用，选中下载好的 `.hap` 文件，按提示完成授权 ——
    助手会自动对安装包做本地签名并完成安装。
 4. 桌面出现 v2rayH 图标，首次启动按提示授予 VPN 权限即可。
