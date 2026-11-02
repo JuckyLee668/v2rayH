@@ -41,7 +41,7 @@ sing-box 系节点（hy2 / tuic / 手动指定内核）：
 Releases 附带的是**未签名** HAP（原因见下文「签名」一节），任选以下一种方式安装。
 系统要求 HarmonyOS 6.1 及以上。
 
-### 方法一：小白调试助手（无需电脑）
+### 方法一：小白调试助手
 
 1. 打开 [Releases](https://github.com/JuckyLee668/v2rayH/releases) 页面，
    下载最新的 `v2rayH-<版本>-unsigned.hap`（可一并下载 `.sha256` 用于校验）。
@@ -54,7 +54,7 @@ Releases 附带的是**未签名** HAP（原因见下文「签名」一节），
 > Windows：`certutil -hashfile v2rayH-<版本>-unsigned.hap SHA256`；
 > Linux：`sha256sum`；macOS：`shasum -a 256`。
 
-### 方法二：DevEco Studio（需要电脑）
+### 方法二：DevEco Studio
 
 1. 安装 [DevEco Studio](https://developer.huawei.com/consumer/cn/deveco-studio/)
    并登录华为账号。
