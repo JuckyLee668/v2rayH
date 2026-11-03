@@ -96,8 +96,8 @@ export struct HomeTab {
     AlertDialog.show({
       title: '测下载',
       message: '将对 ' + n.toString() + ' 个节点逐个测速，每个节点使用 4 个并发连接' +
-        '下载最多约 100MB 数据（先预热不计速、再测稳态速率，与 Speedtest 同类方法），' +
-        '总计最多约 ' + (n * 100).toString() + 'MB 流量。\n\n' +
+        '下载最多约 ' + this.app.speedTestMB.toString() + 'MB 数据（先预热不计速、再测稳态速率，与 Speedtest 同类方法），' +
+        '总计最多约 ' + (n * this.app.speedTestMB).toString() + 'MB 流量。\n\n' +
         '耗时与节点数成正比，建议在 Wi-Fi 或流量充足时进行。是否继续？',
       primaryButton: {
         value: '取消',
@@ -245,10 +245,10 @@ export struct HomeTab {
 
   private testSubtitle(): string {
     if (this.app.testing) {
-      return '正在测延迟 (TCP Ping)...';
+      return '正在测延迟 (真连接)...';
     }
     if (this.app.downloadTesting) {
-      return '正在测下载 (每节点 4 并发, 约 100MB)...';
+      return '正在测下载 (每节点 4 并发, 约 ' + this.app.speedTestMB.toString() + 'MB)...';
     }
     let n: number = this.app.multiCount();
     if (n > 0) {

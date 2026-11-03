@@ -7,6 +7,7 @@ const SET_ABOUT: number = 2;
 const SET_APPEARANCE: number = 3;
 const SET_CONN: number = 4;
 const SET_LOGS: number = 5;
+const SET_SPEED: number = 6;
 
 @Component
 export struct SettingsTab {
@@ -54,6 +55,9 @@ export struct SettingsTab {
     }
     if (this.sub === SET_LOGS) {
       return '运行日志';
+    }
+    if (this.sub === SET_SPEED) {
+      return '测速';
     }
     return '设置';
   }
@@ -147,6 +151,7 @@ export struct SettingsTab {
     Column({ space: 12 }) {
       this.navRow($r('sys.symbol.paintbrush_pointed_filled_circle'), '外观', '深色模式与主题色 · ' + this.app.darkModeText(), SET_APPEARANCE)
       this.navRow($r('sys.symbol.arrow_2_circlepath'), '连接', '启动自动连接 · 故障转移', SET_CONN)
+      this.navRow($r('sys.symbol.timer_circle_fill'), '测速', '下载测速包大小 · 当前 ' + this.app.speedTestMB.toString() + 'MB', SET_SPEED)
       this.navRow($r('sys.symbol.doc'), '备份与还原', '导出 / 导入配置', SET_BACKUP)
       this.navRow($r('sys.symbol.doc_plaintext'), '运行日志', '查看 VPN 与内核日志', SET_LOGS)
       this.navRow($r('sys.symbol.info_circle'), '关于', '版本与内核信息', SET_ABOUT)
@@ -233,6 +238,9 @@ export struct SettingsTab {
     }
     if (this.sub === SET_CONN) {
       return '启动自动连接与故障转移';
+    }
+    if (this.sub === SET_SPEED) {
+      return '下载测速包大小';
     }
     if (this.sub === SET_LOGS) {
       return 'VPN 与内核运行日志';
@@ -543,6 +551,57 @@ export struct SettingsTab {
   }
 
   @Builder
+  speedPage() {
+    Column() {
+      Column() {
+        Text('下载测速包大小')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+          .width('100%')
+        Text('每个节点测速时最多下载的数据量，当前 ' + this.app.speedTestMB.toString() + 'MB')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .margin({ top: 4 })
+          .width('100%')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          SetChoiceChip({ label: '20MB', active: this.app.speedTestMB === 20, onPick: () => {
+            this.app.setSpeedTestMB(20);
+          } })
+          SetChoiceChip({ label: '50MB', active: this.app.speedTestMB === 50, onPick: () => {
+            this.app.setSpeedTestMB(50);
+          } })
+          SetChoiceChip({ label: '100MB', active: this.app.speedTestMB === 100, onPick: () => {
+            this.app.setSpeedTestMB(100);
+          } })
+          SetChoiceChip({ label: '200MB', active: this.app.speedTestMB === 200, onPick: () => {
+            this.app.setSpeedTestMB(200);
+          } })
+          SetChoiceChip({ label: '500MB', active: this.app.speedTestMB === 500, onPick: () => {
+            this.app.setSpeedTestMB(500);
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(AppTheme.CARD_BG)
+      .borderRadius(AppTheme.CARD_RADIUS)
+      .margin({ top: 18 })
+      .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
+
+      Text('包越大测速越准但耗时与流量消耗越多；先用 Cloudflare 测速文件，失败时回退 OVH。测速方法为先预热不计速、再测稳态速率，与 Speedtest 同类。')
+        .fontSize(11)
+        .fontColor(AppTheme.TEXT_WEAK)
+        .width('100%')
+        .margin({ top: 12, left: 4 })
+        .maxLines(4)
+    }
+    .width('100%')
+  }
+
+  @Builder
   logPage() {
     Column() {
       Row() {
@@ -640,6 +699,8 @@ export struct SettingsTab {
             this.appearancePage()
           } else if (this.sub === SET_CONN) {
             this.connPage()
+          } else if (this.sub === SET_SPEED) {
+            this.speedPage()
           } else if (this.sub === SET_LOGS) {
             this.logPage()
           } else {

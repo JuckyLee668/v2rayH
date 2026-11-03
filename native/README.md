@@ -10,7 +10,7 @@ The native side of v2rayH: a Go c-archive (`libxray.a`) that wraps
 | --- | --- |
 | `libxray/main.go` | C ABI: `StartXray` / `StopXray` / `IsXrayRunning` / `GetLastError` / `StartVpnTun` / `StopVpn` / `MeasureDelay` / `MeasureDownload` |
 | `libxray/go.mod` | module + `replace` directive pointing at the vendored fork |
-| `libxray/xray-core/` | vendored xray-core v1.261029.0 + OpenHarmony overlay |
+| `libxray/xray-core/` | vendored xray-core v1.261031.0 + OpenHarmony overlay |
 | `tools/ccwrap/ccwrap.go` | host helper that re-invokes the SDK clang with `--target`/`--sysroot` |
 | `build_libxray.sh` / `.ps1` | one-click rebuild for Linux / Windows |
 

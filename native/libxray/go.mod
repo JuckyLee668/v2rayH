@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/sagernet/sing-box v1.14.4
-	github.com/xtls/xray-core v1.261029.0
+	github.com/xtls/xray-core v1.261031.0
 )
 
 replace github.com/xtls/xray-core => ./xray-core
@@ -103,7 +103,7 @@ require (
 	golang.zx2c4.com/wireguard/windows v1.1.1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	layeh.com/gopher-luar v1.0.11 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect

@@ -11,8 +11,8 @@ export class SubscriptionFetcher {
       let resp = await req.request(url, {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 30000,
-        readTimeout: 30000,
+        connectTimeout: 60000,
+        readTimeout: 60000,
         header: { 'User-Agent': 'v2rayNG/1.0' } as Record<string, string>
       });
       if (resp.responseCode === 200) {

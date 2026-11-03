@@ -44,6 +44,25 @@ export struct ConfigTab {
   @State ePort: string = '';
   @State eCredential: string = '';
   @State eKernel: string = 'auto';
+  @State eAdvOpen: boolean = false;
+  @State eNetwork: string = 'tcp';
+  @State eHeaderType: string = 'none';
+  @State ePath: string = '';
+  @State eHost: string = '';
+  @State eSecurity: string = 'none';
+  @State eSni: string = '';
+  @State eFp: string = '';
+  @State eAlpn: string = '';
+  @State eFlow: string = '';
+  @State eMethod: string = '';
+  @State eAlterId: string = '0';
+  @State ePbk: string = '';
+  @State eSid: string = '';
+  @State eSpx: string = '/';
+  @State eObfs: string = '';
+  @State eObfsPassword: string = '';
+  @State ePorts: string = '';
+  @State eInsecure: boolean = false;
   @State quickLinkDraft: string = '';
   @State advancedOpen: boolean = false;
   @State directDraft: string = '';
@@ -334,6 +353,27 @@ export struct ConfigTab {
     }
   }
 
+  private confirmScanSubscription(url: string): void {
+    AlertDialog.show({
+      title: '扫码结果',
+      message: '二维码内容是链接，添加为订阅分组并立即更新？\n\n' + url,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '添加订阅',
+        fontColor: AppTheme.PRIMARY,
+        action: () => {
+          let name = this.nextGroupName();
+          this.app.addGroup(name, url);
+          this.app.updateGroupSubscription(this.app.groups.length - 1);
+        }
+      }
+    });
+  }
+
   private async importFromScan(): Promise<void> {
     let ctx = this.getUIContext().getHostContext();
     if (ctx === undefined) {
@@ -342,6 +382,11 @@ export struct ConfigTab {
     }
     try {
       let res = await scanBarcode.startScanForResult(ctx);
+      let raw = res.originalValue.trim();
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        this.confirmScanSubscription(raw);
+        return;
+      }
       let list = parseSubscription(res.originalValue);
       if (list.length === 0) {
         this.app.status = '二维码内容不是有效的节点链接';
@@ -825,6 +870,25 @@ export struct ConfigTab {
       ? (typeof uuid === 'string' ? uuid : '')
       : (typeof password === 'string' ? password : '');
     this.eKernel = typeof kernel === 'string' && kernel.length > 0 ? kernel : 'auto';
+    this.eAdvOpen = false;
+    this.eNetwork = s.network.length > 0 ? s.network : 'tcp';
+    this.eHeaderType = s.headerType.length > 0 ? s.headerType : 'none';
+    this.ePath = s.path;
+    this.eHost = s.host;
+    this.eSecurity = s.security.length > 0 ? s.security : 'none';
+    this.eSni = s.sni;
+    this.eFp = s.fp;
+    this.eAlpn = s.alpn;
+    this.eFlow = s.flow;
+    this.eMethod = s.method;
+    this.eAlterId = s.alterId.toString();
+    this.ePbk = s.pbk;
+    this.eSid = s.sid;
+    this.eSpx = s.spx.length > 0 ? s.spx : '/';
+    this.eObfs = s.obfs;
+    this.eObfsPassword = s.obfsPassword;
+    this.ePorts = s.ports;
+    this.eInsecure = s.insecure;
     this.editIdx = idx;
   }
 
@@ -837,6 +901,248 @@ export struct ConfigTab {
       }
     }
     return '密码';
+  }
+
+  private editProtocol(): string {
+    let nodes = this.groupNodes();
+    if (this.editIdx >= 0 && this.editIdx < nodes.length) {
+      return nodes[this.editIdx].protocol;
+    }
+    return '';
+  }
+
+  private editIsXrayFamily(): boolean {
+    let p = this.editProtocol();
+    return p === 'vless' || p === 'vmess' || p === 'trojan';
+  }
+
+  @Builder
+  advToggleRow(label: string, on: boolean, desc: string, onFlip: (v: boolean) => void) {
+    Row() {
+      Column() {
+        Text(label)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+        Text(desc)
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .margin({ top: 2 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Toggle({ type: ToggleType.Switch, isOn: on })
+        .onChange((v: boolean) => {
+          onFlip(v);
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .margin({ top: 12 })
+  }
+
+  @Builder
+  advLabel(text: string) {
+    Text(text)
+      .fontSize(13)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(AppTheme.TEXT)
+      .width('100%')
+      .margin({ top: 14 })
+  }
+
+  @Builder
+  nodeAdvFields() {
+    if (this.editIsXrayFamily()) {
+      this.advLabel('TLS / 传输安全')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        CfgChoiceChip({ label: 'none', active: this.eSecurity === 'none', onPick: () => {
+          this.eSecurity = 'none';
+        } })
+        CfgChoiceChip({ label: 'tls', active: this.eSecurity === 'tls', onPick: () => {
+          this.eSecurity = 'tls';
+        } })
+        if (this.editProtocol() === 'vless') {
+          CfgChoiceChip({ label: 'reality', active: this.eSecurity === 'reality', onPick: () => {
+            this.eSecurity = 'reality';
+          } })
+        }
+      }
+      .width('100%')
+      .margin({ top: 4 })
+
+      if (this.eSecurity !== 'none') {
+        CfgField({ label: 'SNI (服务器名称指示)', value: this.eSni, placeholder: '与服务器地址一致时留空', onEdit: (v: string) => {
+          this.eSni = v;
+        } })
+        this.advLabel('TLS 指纹 (fingerprint)')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          CfgChoiceChip({ label: '留空', active: this.eFp.length === 0, onPick: () => {
+            this.eFp = '';
+          } })
+          CfgChoiceChip({ label: 'chrome', active: this.eFp === 'chrome', onPick: () => {
+            this.eFp = 'chrome';
+          } })
+          CfgChoiceChip({ label: 'firefox', active: this.eFp === 'firefox', onPick: () => {
+            this.eFp = 'firefox';
+          } })
+          CfgChoiceChip({ label: 'safari', active: this.eFp === 'safari', onPick: () => {
+            this.eFp = 'safari';
+          } })
+          CfgChoiceChip({ label: 'ios', active: this.eFp === 'ios', onPick: () => {
+            this.eFp = 'ios';
+          } })
+          CfgChoiceChip({ label: 'android', active: this.eFp === 'android', onPick: () => {
+            this.eFp = 'android';
+          } })
+          CfgChoiceChip({ label: 'randomized', active: this.eFp === 'randomized', onPick: () => {
+            this.eFp = 'randomized';
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+        this.advLabel('ALPN')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          CfgChoiceChip({ label: '留空', active: this.eAlpn.length === 0, onPick: () => {
+            this.eAlpn = '';
+          } })
+          CfgChoiceChip({ label: 'h2', active: this.eAlpn === 'h2', onPick: () => {
+            this.eAlpn = 'h2';
+          } })
+          CfgChoiceChip({ label: 'http/1.1', active: this.eAlpn === 'http/1.1', onPick: () => {
+            this.eAlpn = 'http/1.1';
+          } })
+          CfgChoiceChip({ label: 'h2,http/1.1', active: this.eAlpn === 'h2,http/1.1', onPick: () => {
+            this.eAlpn = 'h2,http/1.1';
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      if (this.eSecurity === 'reality') {
+        CfgField({ label: '公钥 (pbk)', value: this.ePbk, placeholder: 'Reality public key', onEdit: (v: string) => {
+          this.ePbk = v;
+        } })
+        CfgField({ label: '短 ID (sid)', value: this.eSid, placeholder: '', onEdit: (v: string) => {
+          this.eSid = v;
+        } })
+        CfgField({ label: 'spiderX', value: this.eSpx, placeholder: '/', onEdit: (v: string) => {
+          this.eSpx = v;
+        } })
+      }
+
+      this.advLabel('传输协议')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        CfgChoiceChip({ label: 'tcp', active: this.eNetwork === 'tcp', onPick: () => {
+          this.eNetwork = 'tcp';
+        } })
+        CfgChoiceChip({ label: 'ws', active: this.eNetwork === 'ws', onPick: () => {
+          this.eNetwork = 'ws';
+        } })
+        CfgChoiceChip({ label: 'grpc', active: this.eNetwork === 'grpc', onPick: () => {
+          this.eNetwork = 'grpc';
+        } })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+
+      if (this.eNetwork !== 'tcp') {
+        CfgField({ label: this.eNetwork === 'grpc' ? 'serviceName' : '路径 (path)', value: this.ePath, placeholder: this.eNetwork === 'grpc' ? 'grpc 服务名' : '/', onEdit: (v: string) => {
+          this.ePath = v;
+        } })
+        CfgField({ label: this.eNetwork === 'ws' ? '伪装域名 (Host)' : 'Authority', value: this.eHost, placeholder: 'example.com', onEdit: (v: string) => {
+          this.eHost = v;
+        } })
+      }
+      if (this.editProtocol() === 'vless' && this.eSecurity !== 'none') {
+        this.advLabel('流控 (flow)')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          CfgChoiceChip({ label: '留空', active: this.eFlow.length === 0, onPick: () => {
+            this.eFlow = '';
+          } })
+          CfgChoiceChip({ label: 'xtls-rprx-vision', active: this.eFlow === 'xtls-rprx-vision', onPick: () => {
+            this.eFlow = 'xtls-rprx-vision';
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      if (this.editProtocol() === 'vmess') {
+        CfgField({ label: '额外 ID (alterId)', value: this.eAlterId, placeholder: '0', onEdit: (v: string) => {
+          this.eAlterId = v;
+        } })
+      }
+      this.advToggleRow('允许不安全连接', this.eInsecure, '跳过证书校验（insecure）', (v: boolean) => {
+        this.eInsecure = v;
+      })
+    }
+    if (this.editProtocol() === 'ss') {
+      this.advLabel('加密方式 (method)')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        CfgChoiceChip({ label: 'aes-128-gcm', active: this.eMethod === 'aes-128-gcm', onPick: () => {
+          this.eMethod = 'aes-128-gcm';
+        } })
+        CfgChoiceChip({ label: 'aes-256-gcm', active: this.eMethod === 'aes-256-gcm', onPick: () => {
+          this.eMethod = 'aes-256-gcm';
+        } })
+        CfgChoiceChip({ label: 'chacha20-ietf-poly1305', active: this.eMethod === 'chacha20-ietf-poly1305', onPick: () => {
+          this.eMethod = 'chacha20-ietf-poly1305';
+        } })
+        CfgChoiceChip({ label: '2022-blake3-aes-128-gcm', active: this.eMethod === '2022-blake3-aes-128-gcm', onPick: () => {
+          this.eMethod = '2022-blake3-aes-128-gcm';
+        } })
+        CfgChoiceChip({ label: '2022-blake3-aes-256-gcm', active: this.eMethod === '2022-blake3-aes-256-gcm', onPick: () => {
+          this.eMethod = '2022-blake3-aes-256-gcm';
+        } })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+    }
+    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic') {
+      CfgField({ label: 'SNI (服务器名称指示)', value: this.eSni, placeholder: '与服务器地址一致时留空', onEdit: (v: string) => {
+        this.eSni = v;
+      } })
+      this.advLabel('ALPN')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        CfgChoiceChip({ label: '留空', active: this.eAlpn.length === 0, onPick: () => {
+          this.eAlpn = '';
+        } })
+        CfgChoiceChip({ label: 'h3', active: this.eAlpn === 'h3', onPick: () => {
+          this.eAlpn = 'h3';
+        } })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+    }
+    if (this.editProtocol() === 'hy2') {
+      this.advLabel('混淆 (obfs)')
+      Flex({ wrap: FlexWrap.Wrap }) {
+        CfgChoiceChip({ label: '关闭', active: this.eObfs.length === 0, onPick: () => {
+          this.eObfs = '';
+        } })
+        CfgChoiceChip({ label: 'salamander', active: this.eObfs.length > 0, onPick: () => {
+          this.eObfs = 'salamander';
+        } })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+      if (this.eObfs.length > 0) {
+        CfgField({ label: '混淆密码 (obfs-password)', value: this.eObfsPassword, placeholder: '', onEdit: (v: string) => {
+          this.eObfsPassword = v;
+        } })
+      }
+      CfgField({ label: '端口跳跃 (mport)', value: this.ePorts, placeholder: '如 20000-30000，留空关闭', onEdit: (v: string) => {
+        this.ePorts = v;
+      } })
+    }
+    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic') {
+      this.advToggleRow('允许不安全连接', this.eInsecure, '跳过证书校验（insecure）', (v: boolean) => {
+        this.eInsecure = v;
+      })
+    }
   }
 
   private editKernelEffective(): boolean {
@@ -880,6 +1186,25 @@ export struct ConfigTab {
       }
     }
     s.kernel = this.eKernel;
+    s.network = this.eNetwork.trim().length > 0 ? this.eNetwork.trim() : 'tcp';
+    s.headerType = this.eHeaderType.trim();
+    s.path = this.ePath.trim();
+    s.host = this.eHost.trim();
+    s.security = this.eSecurity;
+    s.sni = this.eSni.trim();
+    s.fp = this.eFp.trim();
+    s.alpn = this.eAlpn.trim();
+    s.flow = this.eFlow.trim();
+    s.method = this.eMethod.trim();
+    let aid = parseInt(this.eAlterId, 10);
+    s.alterId = isNaN(aid) || aid < 0 ? 0 : aid;
+    s.pbk = this.ePbk.trim();
+    s.sid = this.eSid.trim();
+    s.spx = this.eSpx.trim().length > 0 ? this.eSpx.trim() : '/';
+    s.obfs = this.eObfs.trim();
+    s.obfsPassword = this.eObfsPassword.trim();
+    s.ports = this.ePorts.trim();
+    s.insecure = this.eInsecure;
     this.app.updateGroupNode(this.nodeGroupIdx, idx, s);
     this.editIdx = -1;
   }
@@ -1079,6 +1404,37 @@ export struct ConfigTab {
             .fontColor(AppTheme.TEXT_WEAK)
             .width('100%')
             .margin({ top: 6 })
+
+          Divider()
+            .strokeWidth(1)
+            .color(AppTheme.DIVIDER)
+            .margin({ top: 16 })
+
+          Row() {
+            Text('其他信息')
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(AppTheme.TEXT)
+            Blank()
+            SymbolGlyph(this.eAdvOpen ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_forward'))
+              .fontSize(15)
+              .fontColor([AppTheme.TEXT_WEAK])
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ top: 14 })
+          .onClick(() => {
+            this.eAdvOpen = !this.eAdvOpen;
+          })
+
+          if (this.eAdvOpen) {
+            this.nodeAdvFields()
+            Text('修改后请保存；不熟悉的参数建议保持原值')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_WEAK)
+              .width('100%')
+              .margin({ top: 10 })
+          }
         }
         .width('100%')
         .padding(16)
@@ -1111,7 +1467,7 @@ export struct ConfigTab {
             this.editIdx = -1;
           })
 
-        Text('仅修改以上字段，其余参数保持原值')
+        Text('展开「其他信息」可修改 TLS、传输协议等高级参数')
           .fontSize(11)
           .fontColor(AppTheme.TEXT_WEAK)
           .width('100%')

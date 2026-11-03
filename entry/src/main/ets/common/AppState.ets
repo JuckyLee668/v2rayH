@@ -61,6 +61,7 @@ class PrefsOptions {
   autoUpdateSubs: boolean = false;
   autoConnect: boolean = false;
   failover: boolean = false;
+  speedTestMB: number = 20;
 }
 
 class PerAppOptions {
@@ -137,6 +138,8 @@ export class AppState {
   autoUpdateSubs: boolean = false;
   autoConnect: boolean = false;
   failover: boolean = false;
+  // 下载测速单节点数据量上限（MB），可自定义
+  speedTestMB: number = 20;
   private failoverTimerId: number = -1;
   private failoverFails: number = 0;
   private failoverCooldownUntil: number = 0;
@@ -205,6 +208,7 @@ export class AppState {
         this.autoUpdateSubs = p.autoUpdateSubs === true;
         this.autoConnect = p.autoConnect === true;
         this.failover = p.failover === true;
+        this.speedTestMB = this.normalizeSpeedTestMB(p.speedTestMB);
       } catch (e) {
         console.error('parse prefs failed: ' + JSON.stringify(e));
       }
@@ -216,6 +220,7 @@ export class AppState {
     p.autoUpdateSubs = this.autoUpdateSubs;
     p.autoConnect = this.autoConnect;
     p.failover = this.failover;
+    p.speedTestMB = this.speedTestMB;
     this.store.writeText(F_PREFS, JSON.stringify(p));
   }
 
@@ -237,6 +242,21 @@ export class AppState {
     } else {
       this.stopFailoverMonitor();
     }
+  }
+
+  private normalizeSpeedTestMB(v: number): number {
+    if (typeof v !== 'number' || isNaN(v) || v < 10) {
+      return 20;
+    }
+    if (v > 500) {
+      return 500;
+    }
+    return Math.round(v);
+  }
+
+  setSpeedTestMB(mb: number): void {
+    this.speedTestMB = this.normalizeSpeedTestMB(mb);
+    this.savePrefs();
   }
 
   private loadMulti(): void {
@@ -1401,13 +1421,20 @@ export class AppState {
         this.status = '正在测下载 (' + (c + 1).toString() + '/' + targets.length.toString() + '): ' + srv.name;
         let pair = buildTestConfigPair(srv);
         let bps: number = -1;
+        let mb: number = this.speedTestMB;
+        let ovhFile: string = '1Gb.dat';
+        if (mb <= 10) {
+          ovhFile = '10Mb.dat';
+        } else if (mb <= 100) {
+          ovhFile = '100Mb.dat';
+        }
         let urls: string[] = [
-          'http://speed.cloudflare.com/__down?bytes=100000000',
-          'http://proof.ovh.net/files/100Mb.dat'
+          'http://speed.cloudflare.com/__down?bytes=' + (mb * 1000000).toString(),
+          'http://proof.ovh.net/files/' + ovhFile
         ];
         for (let i = 0; i < urls.length; i++) {
           try {
-            bps = await testNapi.measureDownload(pair.xrayConfig, pair.singboxConfig, urls[i], 100 * 1024 * 1024);
+            bps = await testNapi.measureDownload(pair.xrayConfig, pair.singboxConfig, urls[i], mb * 1024 * 1024);
           } catch (e) {
             bps = -1;
           }
