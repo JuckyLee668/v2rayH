@@ -1,4 +1,4 @@
-import { vpnExtension, statistics, socket, connection } from '@kit.NetworkKit';
+import { vpnExtension, statistics } from '@kit.NetworkKit';
 import { Want, common, ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
@@ -35,7 +35,6 @@ const F_XRAY_LOG: string = 'xray_error.log';
 const F_MULTI: string = 'multi_select.json';
 const F_SINGBOX_CONFIG: string = 'singbox_config.json';
 
-const PING_TIMEOUT_MS: number = 4000;
 const PING_CONCURRENCY: number = 5;
 const CHAINED_PING_TIMEOUT_MS: number = 10000;
 
@@ -1170,66 +1169,6 @@ export class AppState {
     this.selectServer(next, false);
   }
 
-  private isIpLiteral(host: string): boolean {
-    if (host.indexOf(':') >= 0) {
-      return true;
-    }
-    let parts = host.split('.');
-    if (parts.length !== 4) {
-      return false;
-    }
-    for (let i = 0; i < parts.length; i++) {
-      let p = parts[i];
-      if (p.length === 0 || p.length > 3) {
-        return false;
-      }
-      for (let j = 0; j < p.length; j++) {
-        let c = p.charCodeAt(j);
-        if (c < 48 || c > 57) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
-  private async resolveHost(host: string): Promise<string> {
-    if (this.isIpLiteral(host)) {
-      return host;
-    }
-    let guard: Promise<string> = sleepMs(PING_TIMEOUT_MS).then((): string => '');
-    let resolve: Promise<string> = connection.getDefaultNet().then((net: connection.NetHandle): Promise<string> => {
-      return net.getAddressByName(host).then((addr: connection.NetAddress): string => addr.address);
-    }).catch((): string => '');
-    return Promise.race([resolve, guard]);
-  }
-
-  private async tcpPingServer(srv: ServerConfig): Promise<number> {
-    let host: string = await this.resolveHost(srv.address);
-    if (host.length === 0) {
-      return -1;
-    }
-    let tcp: socket.TCPSocket = socket.constructTCPSocketInstance();
-    let start = Date.now();
-    try {
-      await tcp.connect({ address: { address: host, port: srv.port }, timeout: PING_TIMEOUT_MS });
-    } catch (e) {
-      try {
-        await tcp.close();
-      } catch (e2) {
-        console.error('tcp ping close failed');
-      }
-      return -1;
-    }
-    let ms = Date.now() - start;
-    try {
-      await tcp.close();
-    } catch (e3) {
-      console.error('tcp ping close failed after connect');
-    }
-    return ms;
-  }
-
   private applyPingSort(): void {
     if (this.servers.length < 2) {
       return;
@@ -1389,7 +1328,7 @@ export class AppState {
         }
         let jobs: Promise<number>[] = [];
         for (let j = 0; j < xrayTargets.length; j++) {
-          jobs.push(this.tcpPingServer(this.servers[xrayTargets[j]]));
+          jobs.push(this.chainedPingServer(this.servers[xrayTargets[j]]));
         }
         let xrayResults: number[] = await Promise.all(jobs);
         let sbResults: number[] = [];
@@ -1464,7 +1403,7 @@ export class AppState {
         let bps: number = -1;
         let urls: string[] = [
           'http://speed.cloudflare.com/__down?bytes=100000000',
-          'http://cachefly.cachefly.net/10mb.test'
+          'http://proof.ovh.net/files/100Mb.dat'
         ];
         for (let i = 0; i < urls.length; i++) {
           try {
