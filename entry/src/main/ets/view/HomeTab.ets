@@ -320,28 +320,36 @@ export struct HomeTab {
               })
           }
 
-          Button(this.app.testing ? '测延迟中' : (this.app.multiCount() > 0 ? '测选中' : '测延迟'))
+          Button(this.app.testing ? (this.app.pingStopPending() ? '停止中' : '停止') : (this.app.multiCount() > 0 ? '测选中' : '测延迟'))
             .type(ButtonType.Capsule)
             .height(30)
             .fontSize(12)
-            .fontColor(this.app.testing ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
-            .backgroundColor(this.app.testing ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+            .fontColor(this.app.testing ? (this.app.pingStopPending() ? AppTheme.TEXT_SUB : AppTheme.DANGER) : AppTheme.PRIMARY)
+            .backgroundColor(this.app.testing ? (this.app.pingStopPending() ? AppTheme.CHIP_BG : AppTheme.DANGER_SOFT) : AppTheme.PRIMARY_SOFT)
             .padding({ left: 12, right: 12 })
-            .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+            .enabled(this.app.testing ? !this.app.pingStopPending() : (!this.app.downloadTesting && !this.app.busy))
             .onClick(() => {
-              this.app.testAll();
+              if (this.app.testing) {
+                this.app.requestStopTestAll();
+              } else {
+                this.app.testAll();
+              }
             })
 
-          Button(this.app.downloadTesting ? '测下载中' : '测下载')
+          Button(this.app.downloadTesting ? (this.app.downloadStopPending() ? '停止中' : '停止') : '测下载')
             .type(ButtonType.Capsule)
             .height(30)
             .fontSize(12)
-            .fontColor(this.app.downloadTesting ? AppTheme.TEXT_SUB : AppTheme.PRIMARY)
-            .backgroundColor(this.app.downloadTesting ? AppTheme.CHIP_BG : AppTheme.PRIMARY_SOFT)
+            .fontColor(this.app.downloadTesting ? (this.app.downloadStopPending() ? AppTheme.TEXT_SUB : AppTheme.DANGER) : AppTheme.PRIMARY)
+            .backgroundColor(this.app.downloadTesting ? (this.app.downloadStopPending() ? AppTheme.CHIP_BG : AppTheme.DANGER_SOFT) : AppTheme.PRIMARY_SOFT)
             .padding({ left: 12, right: 12 })
-            .enabled(!this.app.testing && !this.app.downloadTesting && !this.app.busy)
+            .enabled(this.app.downloadTesting ? !this.app.downloadStopPending() : (!this.app.testing && !this.app.busy))
             .onClick(() => {
-              this.confirmDownloadTest();
+              if (this.app.downloadTesting) {
+                this.app.requestStopDownloadTest();
+              } else {
+                this.confirmDownloadTest();
+              }
             })
         }
         .width('100%')

@@ -17,7 +17,7 @@ sing-box 系节点（hy2 / tuic / anytls / 手动指定内核）：
 应用 ──► vpn-tun ──► 用户态网络栈 ──► Xray socks 出站 (127.0.0.1:10810)
       ──► sing-box mixed 入站 ──► Hysteria2 / TUIC / AnyTLS 出站 ──► 互联网
 ```
-![](intro.jpg)
+![](intro.png)
 
 ## 功能特性
 

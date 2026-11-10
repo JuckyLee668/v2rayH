@@ -1455,6 +1455,20 @@ export class AppState {
     this.store.saveSelected(sel);
   }
 
+  private pingStopRequested: boolean = false;
+
+  requestStopTestAll(): void {
+    if (!this.testing || this.pingStopRequested) {
+      return;
+    }
+    this.pingStopRequested = true;
+    this.status = '停止测延迟: 等待当前批次完成...';
+  }
+
+  pingStopPending(): boolean {
+    return this.testing && this.pingStopRequested;
+  }
+
   async testAll(): Promise<void> {
     if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
       return;
@@ -1475,11 +1489,17 @@ export class AppState {
     this.pings = init;
     this.busy = true;
     this.testing = true;
+    this.pingStopRequested = false;
     this.status = '正在测延迟...';
+    let stopped = false;
     try {
       let done = 0;
       let sbPortOffset = 0;
       for (let c = 0; c < targets.length; c += PING_CONCURRENCY) {
+        if (this.pingStopRequested) {
+          stopped = true;
+          break;
+        }
         let chunk: number[] = targets.slice(c, c + PING_CONCURRENCY);
         let jobs: Promise<number>[] = [];
         for (let j = 0; j < chunk.length; j++) {
@@ -1501,14 +1521,30 @@ export class AppState {
         }
         this.pings = copy;
         done += chunk.length;
-        this.status = '正在测延迟 ' + done.toString() + '/' + targets.length.toString() + '...';
+        if (!this.pingStopRequested) {
+          this.status = '正在测延迟 ' + done.toString() + '/' + targets.length.toString() + '...';
+        }
       }
-      this.status = '测延迟完成';
+      if (stopped) {
+        let copy: number[] = [];
+        for (let j = 0; j < this.pings.length; j++) {
+          copy.push(this.pings[j]);
+        }
+        for (let j = 0; j < targets.length; j++) {
+          if (copy[targets[j]] === -2) {
+            copy[targets[j]] = -3;
+          }
+        }
+        this.pings = copy;
+        this.status = '测延迟已停止: ' + done.toString() + '/' + targets.length.toString();
+      } else {
+        this.status = '测延迟完成';
+      }
     } finally {
       this.busy = false;
       this.testing = false;
     }
-    if (this.servers.length > 1 && this.sortPromptHandler !== null) {
+    if (!stopped && this.servers.length > 1 && this.sortPromptHandler !== null) {
       this.sortPromptHandler('ping');
     }
   }
@@ -1525,6 +1561,20 @@ export class AppState {
     } catch (e) {
       return -1;
     }
+  }
+
+  private downloadStopRequested: boolean = false;
+
+  requestStopDownloadTest(): void {
+    if (!this.downloadTesting || this.downloadStopRequested) {
+      return;
+    }
+    this.downloadStopRequested = true;
+    this.status = '停止测下载: 等待当前批次完成...';
+  }
+
+  downloadStopPending(): boolean {
+    return this.downloadTesting && this.downloadStopRequested;
   }
 
   async testDownload(): Promise<void> {
@@ -1546,12 +1596,18 @@ export class AppState {
     this.speeds = init;
     this.downloadTesting = true;
     this.busy = true;
+    this.downloadStopRequested = false;
     let ok = 0;
+    let stopped = false;
     try {
       let done = 0;
       let sbPortOffset = 0;
       let concurrency: number = this.speedTestConcurrency;
       for (let c = 0; c < targets.length; c += concurrency) {
+        if (this.downloadStopRequested) {
+          stopped = true;
+          break;
+        }
         let chunk: number[] = targets.slice(c, c + concurrency);
         let jobs: Promise<number>[] = [];
         for (let j = 0; j < chunk.length; j++) {
@@ -1576,14 +1632,30 @@ export class AppState {
         }
         this.speeds = copy;
         done += chunk.length;
-        this.status = '正在测下载 ' + done.toString() + '/' + targets.length.toString() + '...';
+        if (!this.downloadStopRequested) {
+          this.status = '正在测下载 ' + done.toString() + '/' + targets.length.toString() + '...';
+        }
       }
-      this.status = '测下载完成: ' + ok.toString() + '/' + targets.length.toString() + ' 个节点成功';
+      if (stopped) {
+        let copy: number[] = [];
+        for (let j = 0; j < this.speeds.length; j++) {
+          copy.push(this.speeds[j]);
+        }
+        for (let j = 0; j < targets.length; j++) {
+          if (copy[targets[j]] === -2) {
+            copy[targets[j]] = -3;
+          }
+        }
+        this.speeds = copy;
+        this.status = '测下载已停止: ' + ok.toString() + '/' + targets.length.toString() + ' 个节点成功';
+      } else {
+        this.status = '测下载完成: ' + ok.toString() + '/' + targets.length.toString() + ' 个节点成功';
+      }
     } finally {
       this.downloadTesting = false;
       this.busy = false;
     }
-    if (this.servers.length > 1 && this.sortPromptHandler !== null) {
+    if (!stopped && this.servers.length > 1 && this.sortPromptHandler !== null) {
       this.sortPromptHandler('download');
     }
   }
