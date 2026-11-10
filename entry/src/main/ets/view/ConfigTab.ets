@@ -43,10 +43,12 @@ export struct ConfigTab {
   @State eAddress: string = '';
   @State ePort: string = '';
   @State eCredential: string = '';
+  @State eUsername: string = '';
   @State eKernel: string = 'auto';
   @State eAdvOpen: boolean = false;
   @State eNetwork: string = 'tcp';
   @State eHeaderType: string = 'none';
+  @State eSeed: string = '';
   @State ePath: string = '';
   @State eHost: string = '';
   @State eSecurity: string = 'none';
@@ -72,8 +74,10 @@ export struct ConfigTab {
   @State mAddress: string = '';
   @State mPort: string = '';
   @State mCredential: string = '';
+  @State mUsername: string = '';
   @State mMethod: string = 'aes-128-gcm';
   @State mNetwork: string = 'tcp';
+  @State mSeed: string = '';
   @State mPath: string = '';
   @State mSecurity: string = 'none';
   @State mSni: string = '';
@@ -870,6 +874,7 @@ export struct ConfigTab {
       ? (typeof uuid === 'string' ? uuid : '')
       : (typeof password === 'string' ? password : '');
     this.eKernel = typeof kernel === 'string' && kernel.length > 0 ? kernel : 'auto';
+    this.eUsername = s.username;
     this.eAdvOpen = false;
     this.eNetwork = s.network.length > 0 ? s.network : 'tcp';
     this.eHeaderType = s.headerType.length > 0 ? s.headerType : 'none';
@@ -888,6 +893,7 @@ export struct ConfigTab {
     this.eObfs = s.obfs;
     this.eObfsPassword = s.obfsPassword;
     this.ePorts = s.ports;
+    this.eSeed = s.seed;
     this.eInsecure = s.insecure;
     this.editIdx = idx;
   }
@@ -913,7 +919,7 @@ export struct ConfigTab {
 
   private editIsXrayFamily(): boolean {
     let p = this.editProtocol();
-    return p === 'vless' || p === 'vmess' || p === 'trojan';
+    return p === 'vless' || p === 'vmess' || p === 'trojan' || p === 'http' || p === 'socks';
   }
 
   @Builder
@@ -956,6 +962,11 @@ export struct ConfigTab {
 
   @Builder
   nodeAdvFields() {
+    if (this.editProtocol() === 'http' || this.editProtocol() === 'socks') {
+      CfgField({ label: '用户名', value: this.eUsername, placeholder: '认证用户名，可留空', onEdit: (v: string) => {
+        this.eUsername = v;
+      } })
+    }
     if (this.editIsXrayFamily()) {
       this.advLabel('TLS / 传输安全')
       Flex({ wrap: FlexWrap.Wrap }) {
@@ -1045,17 +1056,67 @@ export struct ConfigTab {
         CfgChoiceChip({ label: 'grpc', active: this.eNetwork === 'grpc', onPick: () => {
           this.eNetwork = 'grpc';
         } })
+        CfgChoiceChip({ label: 'httpupgrade', active: this.eNetwork === 'httpupgrade', onPick: () => {
+          this.eNetwork = 'httpupgrade';
+        } })
+        CfgChoiceChip({ label: 'xhttp', active: this.eNetwork === 'xhttp', onPick: () => {
+          this.eNetwork = 'xhttp';
+        } })
+        CfgChoiceChip({ label: 'kcp', active: this.eNetwork === 'kcp', onPick: () => {
+          this.eNetwork = 'kcp';
+        } })
       }
       .width('100%')
       .margin({ top: 4 })
 
-      if (this.eNetwork !== 'tcp') {
+      if (this.eNetwork !== 'tcp' && this.eNetwork !== 'kcp') {
         CfgField({ label: this.eNetwork === 'grpc' ? 'serviceName' : '路径 (path)', value: this.ePath, placeholder: this.eNetwork === 'grpc' ? 'grpc 服务名' : '/', onEdit: (v: string) => {
           this.ePath = v;
         } })
-        CfgField({ label: this.eNetwork === 'ws' ? '伪装域名 (Host)' : 'Authority', value: this.eHost, placeholder: 'example.com', onEdit: (v: string) => {
+        CfgField({ label: this.eNetwork === 'ws' ? '伪装域名 (Host)' : 'Host', value: this.eHost, placeholder: 'example.com', onEdit: (v: string) => {
           this.eHost = v;
         } })
+      }
+      if (this.eNetwork === 'kcp') {
+        this.advLabel('mKCP 伪装 (headerType)')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          CfgChoiceChip({ label: 'none', active: this.eHeaderType === 'none', onPick: () => {
+            this.eHeaderType = 'none';
+          } })
+          CfgChoiceChip({ label: 'srtp', active: this.eHeaderType === 'srtp', onPick: () => {
+            this.eHeaderType = 'srtp';
+          } })
+          CfgChoiceChip({ label: 'utp', active: this.eHeaderType === 'utp', onPick: () => {
+            this.eHeaderType = 'utp';
+          } })
+          CfgChoiceChip({ label: 'wechat-video', active: this.eHeaderType === 'wechat-video', onPick: () => {
+            this.eHeaderType = 'wechat-video';
+          } })
+          CfgChoiceChip({ label: 'dtls', active: this.eHeaderType === 'dtls', onPick: () => {
+            this.eHeaderType = 'dtls';
+          } })
+          CfgChoiceChip({ label: 'wireguard', active: this.eHeaderType === 'wireguard', onPick: () => {
+            this.eHeaderType = 'wireguard';
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+        CfgField({ label: '加密种子 (seed)', value: this.eSeed, placeholder: '可留空', onEdit: (v: string) => {
+          this.eSeed = v;
+        } })
+      }
+      if (this.eNetwork === 'tcp') {
+        this.advLabel('TCP 伪装 (headerType)')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          CfgChoiceChip({ label: 'none', active: this.eHeaderType === 'none', onPick: () => {
+            this.eHeaderType = 'none';
+          } })
+          CfgChoiceChip({ label: 'http', active: this.eHeaderType === 'http', onPick: () => {
+            this.eHeaderType = 'http';
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
       }
       if (this.editProtocol() === 'vless' && this.eSecurity !== 'none') {
         this.advLabel('流控 (flow)')
@@ -1101,7 +1162,7 @@ export struct ConfigTab {
       .width('100%')
       .margin({ top: 4 })
     }
-    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic') {
+    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic' || this.editProtocol() === 'anytls') {
       CfgField({ label: 'SNI (服务器名称指示)', value: this.eSni, placeholder: '与服务器地址一致时留空', onEdit: (v: string) => {
         this.eSni = v;
       } })
@@ -1138,7 +1199,7 @@ export struct ConfigTab {
         this.ePorts = v;
       } })
     }
-    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic') {
+    if (this.editProtocol() === 'hy2' || this.editProtocol() === 'tuic' || this.editProtocol() === 'anytls') {
       this.advToggleRow('允许不安全连接', this.eInsecure, '跳过证书校验（insecure）', (v: boolean) => {
         this.eInsecure = v;
       })
@@ -1157,7 +1218,7 @@ export struct ConfigTab {
       return false;
     }
     let p: string = nodes[this.editIdx].protocol;
-    return p === 'hy2' || p === 'tuic';
+    return p === 'hy2' || p === 'tuic' || p === 'anytls';
   }
 
   private saveNodeEdit(): void {
@@ -1185,6 +1246,9 @@ export struct ConfigTab {
         s.password = cred;
       }
     }
+    if (s.protocol === 'http' || s.protocol === 'socks') {
+      s.username = this.eUsername.trim();
+    }
     s.kernel = this.eKernel;
     s.network = this.eNetwork.trim().length > 0 ? this.eNetwork.trim() : 'tcp';
     s.headerType = this.eHeaderType.trim();
@@ -1204,6 +1268,7 @@ export struct ConfigTab {
     s.obfs = this.eObfs.trim();
     s.obfsPassword = this.eObfsPassword.trim();
     s.ports = this.ePorts.trim();
+    s.seed = this.eSeed.trim();
     s.insecure = this.eInsecure;
     this.app.updateGroupNode(this.nodeGroupIdx, idx, s);
     this.editIdx = -1;
@@ -1399,7 +1464,7 @@ export struct ConfigTab {
           .width('100%')
           .margin({ top: 4 })
 
-          Text('hy2 / tuic 节点始终由 sing-box 承载；其余协议可在此手动指定内核')
+          Text('hy2 / tuic / anytls 节点始终由 sing-box 承载；其余协议可在此手动指定内核')
             .fontSize(11)
             .fontColor(AppTheme.TEXT_WEAK)
             .width('100%')
@@ -1549,8 +1614,12 @@ export struct ConfigTab {
     return this.mProtocol === 'vless' || this.mProtocol === 'vmess' || this.mProtocol === 'tuic';
   }
 
+  private isUserPassProtocol(): boolean {
+    return this.mProtocol === 'http' || this.mProtocol === 'socks';
+  }
+
   private isSingboxProtocol(): boolean {
-    return this.mProtocol === 'hy2' || this.mProtocol === 'tuic';
+    return this.mProtocol === 'hy2' || this.mProtocol === 'tuic' || this.mProtocol === 'anytls';
   }
 
   private buildManualServer(): ServerConfig | undefined {
@@ -1568,6 +1637,9 @@ export struct ConfigTab {
       s.alterId = 0;
     } else {
       s.password = this.mCredential.trim();
+    }
+    if (this.isUserPassProtocol()) {
+      s.username = this.mUsername.trim();
     }
     if (this.mProtocol === 'shadowsocks') {
       s.method = this.mMethod.trim().length > 0 ? this.mMethod.trim() : 'aes-128-gcm';
@@ -1590,6 +1662,7 @@ export struct ConfigTab {
     }
     s.network = this.mNetwork;
     s.path = this.mPath.trim();
+    s.seed = this.mSeed.trim();
     s.security = this.mSecurity;
     s.sni = this.mSni.trim();
     s.pbk = this.mPbk.trim();
@@ -1634,7 +1707,7 @@ export struct ConfigTab {
             .fontWeight(FontWeight.Medium)
             .fontColor(AppTheme.TEXT)
             .width('100%')
-          Text('粘贴 vless / vmess / trojan / ss / hy2 / tuic 分享链接，自动解析全部参数，支持一次多个')
+          Text('粘贴 vless / vmess / trojan / ss / hy2 / tuic / anytls / http / socks 分享链接，自动解析全部参数，支持一次多个')
             .fontSize(11)
             .fontColor(AppTheme.TEXT_WEAK)
             .width('100%')
@@ -1707,11 +1780,20 @@ export struct ConfigTab {
               CfgChoiceChip({ label: 'TUIC', active: this.mProtocol === 'tuic', onPick: () => {
                 this.mProtocol = 'tuic';
               } })
+              CfgChoiceChip({ label: 'AnyTLS', active: this.mProtocol === 'anytls', onPick: () => {
+                this.mProtocol = 'anytls';
+              } })
+              CfgChoiceChip({ label: 'HTTP', active: this.mProtocol === 'http', onPick: () => {
+                this.mProtocol = 'http';
+              } })
+              CfgChoiceChip({ label: 'SOCKS5', active: this.mProtocol === 'socks', onPick: () => {
+                this.mProtocol = 'socks';
+              } })
             }
             .width('100%')
             .margin({ top: 4 })
             if (this.isSingboxProtocol()) {
-              Text('hy2 / tuic 由 sing-box 内核承载，TLS 为协议内置，无需单独配置')
+              Text('hy2 / tuic / anytls 由 sing-box 内核承载，TLS 为协议内置，无需单独配置')
                 .fontSize(11)
                 .fontColor(AppTheme.TEXT_WEAK)
                 .width('100%')
@@ -1739,6 +1821,12 @@ export struct ConfigTab {
             if (this.mProtocol === 'tuic') {
               CfgField({ label: '密码', value: this.mPassword2, placeholder: 'TUIC 密码', onEdit: (v: string) => {
                 this.mPassword2 = v;
+              } })
+            }
+
+            if (this.isUserPassProtocol()) {
+              CfgField({ label: '用户名', value: this.mUsername, placeholder: '认证用户名，可留空', onEdit: (v: string) => {
+                this.mUsername = v;
               } })
             }
 
@@ -1811,13 +1899,27 @@ export struct ConfigTab {
               CfgChoiceChip({ label: 'gRPC', active: this.mNetwork === 'grpc', onPick: () => {
                 this.mNetwork = 'grpc';
               } })
+              CfgChoiceChip({ label: 'HTTPUpgrade', active: this.mNetwork === 'httpupgrade', onPick: () => {
+                this.mNetwork = 'httpupgrade';
+              } })
+              CfgChoiceChip({ label: 'XHTTP', active: this.mNetwork === 'xhttp', onPick: () => {
+                this.mNetwork = 'xhttp';
+              } })
+              CfgChoiceChip({ label: 'mKCP', active: this.mNetwork === 'kcp', onPick: () => {
+                this.mNetwork = 'kcp';
+              } })
             }
             .width('100%')
             .margin({ top: 4 })
 
-            if (this.mNetwork !== 'tcp') {
+            if (this.mNetwork !== 'tcp' && this.mNetwork !== 'kcp') {
               CfgField({ label: this.mNetwork === 'grpc' ? '服务名' : '路径 (path)', value: this.mPath, placeholder: '/ws', onEdit: (v: string) => {
                 this.mPath = v;
+              } })
+            }
+            if (this.mNetwork === 'kcp') {
+              CfgField({ label: '加密种子 (seed)', value: this.mSeed, placeholder: '可留空', onEdit: (v: string) => {
+                this.mSeed = v;
               } })
             }
 

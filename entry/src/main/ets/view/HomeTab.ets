@@ -93,12 +93,27 @@ export struct HomeTab {
 
   private confirmDownloadTest(): void {
     let n: number = this.app.downloadTargetsCount();
+    let skipped: number = this.app.multiCount() > 0 ? 0 : this.app.pingTimeoutCount();
+    if (n === 0) {
+      AlertDialog.show({
+        title: '测下载',
+        message: '节点延迟测速均超时，无节点可测下载。可先重新测延迟，或手动勾选节点后再测。',
+        primaryButton: {
+          value: '知道了',
+          action: () => {
+          }
+        }
+      });
+      return;
+    }
+    let skipNote: string = skipped > 0 ? '\n\n已自动跳过 ' + skipped.toString() + ' 个延迟超时节点。' : '';
     AlertDialog.show({
       title: '测下载',
-      message: '将对 ' + n.toString() + ' 个节点逐个测速，每个节点使用 4 个并发连接' +
-        '下载最多约 ' + this.app.speedTestMB.toString() + 'MB 数据（先预热不计速、再测稳态速率，与 Speedtest 同类方法），' +
-        '总计最多约 ' + (n * this.app.speedTestMB).toString() + 'MB 流量。\n\n' +
-        '耗时与节点数成正比，建议在 Wi-Fi 或流量充足时进行。是否继续？',
+      message: '将对 ' + n.toString() + ' 个节点测速（同时最多 ' + this.app.speedTestConcurrency.toString() +
+        ' 个，每节点 4 个并发连接），' +
+        '每个节点下载最多约 ' + this.app.speedTestMB.toString() + 'MB 数据（先预热不计速、再测稳态速率，与 Speedtest 同类方法），' +
+        '总计最多约 ' + (n * this.app.speedTestMB).toString() + 'MB 流量。' + skipNote + '\n\n' +
+        '是否继续？',
       primaryButton: {
         value: '取消',
         action: () => {
@@ -248,7 +263,8 @@ export struct HomeTab {
       return '正在测延迟 (真连接)...';
     }
     if (this.app.downloadTesting) {
-      return '正在测下载 (每节点 4 并发, 约 ' + this.app.speedTestMB.toString() + 'MB)...';
+      return '正在测下载 (' + this.app.speedTestConcurrency.toString() + ' 节点并发, 每节点约 ' +
+        this.app.speedTestMB.toString() + 'MB)...';
     }
     let n: number = this.app.multiCount();
     if (n > 0) {

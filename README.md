@@ -1,10 +1,10 @@
 # v2rayH
 
 [v2rayNG](https://github.com/2dust/v2rayNG) 的 HarmonyOS / OpenHarmony 移植版：
-一个 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC 客户端，
+一个 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS 客户端，
 双内核设计 —— [Xray-core](https://github.com/xtls/xray-core) 永远接管 tun，
 [sing-box](https://github.com/SagerNet/sing-box) 作为可选内核经本机链式转发承载
-hy2 / tuic 等协议，通过系统 VPN 接口接管全部流量。
+hy2 / tuic / anytls 等协议，通过系统 VPN 接口接管全部流量。
 
 流量路径：
 
@@ -13,26 +13,54 @@ Xray 系节点：
 应用 ──► vpn-tun (VpnExtensionAbility) ──► 轻量用户态网络栈 (L3→L4)
       ──► Xray VLESS+REALITY 出站 ──► 互联网
 
-sing-box 系节点（hy2 / tuic / 手动指定内核）：
+sing-box 系节点（hy2 / tuic / anytls / 手动指定内核）：
 应用 ──► vpn-tun ──► 用户态网络栈 ──► Xray socks 出站 (127.0.0.1:10810)
-      ──► sing-box mixed 入站 ──► Hysteria2 / TUIC 出站 ──► 互联网
+      ──► sing-box mixed 入站 ──► Hysteria2 / TUIC / AnyTLS 出站 ──► 互联网
 ```
 ![](intro.jpg)
 
 ## 功能特性
 
-- VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray v26.10.31 内核）
-- Hysteria2 / TUIC 协议支持（sing-box v1.14.4 内核，链式架构）
-- 每节点可手动指定运行内核（自动 / Xray / sing-box；hy2、tuic 始终走 sing-box）
+### 协议与传输
+
+- VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray v26.11.9 内核）
+- Hysteria2 / TUIC / AnyTLS 协议支持（sing-box v1.14.4 内核，链式架构）
+- 传输层：TCP（含 HTTP 伪装）/ WebSocket / gRPC / httpupgrade / XHTTP /
+  mKCP（headerType 伪装与 seed 密钥），协议与传输自由组合
+- TLS / REALITY / uTLS 指纹 / SNI / ALPN / 允许不安全证书等逐项可调；
+  VMess 加密（scy）、TUIC 拥塞控制（congestion_control）等高级字段
+  经分享链接解析透传（TUIC 缺省 bbr）
+- 分享链接解析与生成覆盖全部协议字段（vless / vmess / trojan / ss / socks /
+  hy2 / tuic / anytls）
+
+### 内核
+
+- 双内核：Xray 永远接管 tun；sing-box 经本机链式转发承载 sing-box 系协议
+- 每节点可手动指定运行内核（自动 / Xray / sing-box；hy2、tuic、anytls 始终走 sing-box）
+- 关于页展示双内核编译期版本号
+
+### 节点与订阅
+
 - 多订阅分组管理：每组独立链接、独立更新、独立节点列表
-- 真实连接延迟测速：经临时内核实例通过节点代理实测 HTTP 往返，测完可选「按延迟从低到高」排序
-- Speedtest 式下载测速：4 并发 + 预热排除慢启动 + 稳态计时段，测速包大小可自定义（默认 20MB），
-  支持多选/全部分组节点批量测试，测完可选「按速率从高到低」排序；
-  节点列表同时展示延迟与速率（延迟在上、速率在下）
-- 多选节点批量测速 / 批量操作
-- 故障转移：当前节点不可达时自动切换
-- 分应用代理：全部 / 仅代理选中 / 排除选中
 - 剪贴板 / 扫码 / 手动添加节点，支持分享节点
+- 多选节点批量测速 / 批量操作
+
+### 测速
+
+- 真实连接延迟测速：经临时内核实例通过节点代理实测 HTTP 往返（16 并发），
+  测完可选「按延迟从低到高」排序
+- Speedtest 式下载测速：每节点 4 并发连接 + 预热排除慢启动 + 稳态计时段，
+  测速包大小可自定义（默认 20MB）
+- 多节点并发测速：同时测速节点数 1–6 可调（默认 3），节点多时成倍缩短总耗时
+- 支持多选/全部分组节点批量测试，测完可选「按速率从高到低」排序；
+  节点列表同时展示延迟与速率（延迟在上、速率在下）
+
+### 稳定性与系统能力
+
+- 故障转移：当前节点不可达时自动切换
+- 后台保活：连接期间申请数据传输长时任务（通知栏常驻提醒），
+  防止退至后台后进程被冻结；断开连接或删除通知自动取消
+- 分应用代理：全部 / 仅代理选中 / 排除选中
 - 深色模式与主题色跟随系统
 - 底部页签沉浸光感材质（HDS 组件，随设备算力自适应）
 

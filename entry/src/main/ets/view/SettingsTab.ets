@@ -150,8 +150,8 @@ export struct SettingsTab {
   navPage() {
     Column({ space: 12 }) {
       this.navRow($r('sys.symbol.paintbrush_pointed_filled_circle'), '外观', '深色模式与主题色 · ' + this.app.darkModeText(), SET_APPEARANCE)
-      this.navRow($r('sys.symbol.arrow_2_circlepath'), '连接', '启动自动连接 · 故障转移', SET_CONN)
-      this.navRow($r('sys.symbol.timer_circle_fill'), '测速', '下载测速包大小 · 当前 ' + this.app.speedTestMB.toString() + 'MB', SET_SPEED)
+      this.navRow($r('sys.symbol.arrow_2_circlepath'), '连接', '启动自动连接 · 故障转移 · 后台保活', SET_CONN)
+      this.navRow($r('sys.symbol.timer_circle_fill'), '测速', '包大小 ' + this.app.speedTestMB.toString() + 'MB · 并发 ' + this.app.speedTestConcurrency.toString() + ' 节点', SET_SPEED)
       this.navRow($r('sys.symbol.doc'), '备份与还原', '导出 / 导入配置', SET_BACKUP)
       this.navRow($r('sys.symbol.doc_plaintext'), '运行日志', '查看 VPN 与内核日志', SET_LOGS)
       this.navRow($r('sys.symbol.info_circle'), '关于', '版本与内核信息', SET_ABOUT)
@@ -209,7 +209,7 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('双内核：Xray 负责 tun 接管与路由；hy2 / tuic 等协议由 sing-box 经本机链式转发承载，版本号在编译期写入。')
+      Text('双内核：Xray 负责 tun 接管与路由；hy2 / tuic / anytls 等协议由 sing-box 经本机链式转发承载，版本号在编译期写入。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')
@@ -533,6 +533,34 @@ export struct SettingsTab {
         .width('100%')
         .alignItems(VerticalAlign.Center)
         .padding({ left: 16, right: 16, top: 13, bottom: 13 })
+
+        Divider()
+          .strokeWidth(1)
+          .color(AppTheme.DIVIDER)
+
+        Row() {
+          Column() {
+            Text('后台保活')
+              .fontSize(14)
+              .fontColor(AppTheme.TEXT)
+            Text('连接期间退至后台保持 VPN 运行，可能增加耗电')
+              .fontSize(11)
+              .fontColor(AppTheme.TEXT_SUB)
+              .margin({ top: 2 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Toggle({ type: ToggleType.Switch, isOn: this.app.keepAlive })
+            .onChange((v: boolean) => {
+              this.app.setKeepAlive(v);
+            })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16, top: 13, bottom: 13 })
       }
       .width('100%')
       .backgroundColor(AppTheme.CARD_BG)
@@ -540,12 +568,12 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('开启故障转移后，连接期间每 45 秒检测一次当前节点，连续 2 次不可达时自动切换到下一节点；切换后冷却 2 分钟再继续检测，所有节点均不可用时停止切换。')
+      Text('开启故障转移后，连接期间每 45 秒检测一次当前节点，连续 2 次不可达时自动切换到下一节点；切换后冷却 2 分钟再继续检测，所有节点均不可用时停止切换。\n开启后台保活后，连接时申请数据传输长时任务，通知栏会显示常驻提醒，删除通知即停止保活；断开连接或关闭开关时自动取消。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')
         .margin({ top: 12, left: 4 })
-        .maxLines(5)
+        .maxLines(8)
     }
     .width('100%')
   }
@@ -591,7 +619,45 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('包越大测速越准但耗时与流量消耗越多；先用 Cloudflare 测速文件，失败时回退 OVH。测速方法为先预热不计速、再测稳态速率，与 Speedtest 同类。')
+      Column() {
+        Text('同时测速节点数')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+          .width('100%')
+        Text('节点多时并发测速可大幅缩短总耗时，当前 ' + this.app.speedTestConcurrency.toString() + ' 个')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .margin({ top: 4 })
+          .width('100%')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          SetChoiceChip({ label: '1（逐个，最准）', active: this.app.speedTestConcurrency === 1, onPick: () => {
+            this.app.setSpeedTestConcurrency(1);
+          } })
+          SetChoiceChip({ label: '2', active: this.app.speedTestConcurrency === 2, onPick: () => {
+            this.app.setSpeedTestConcurrency(2);
+          } })
+          SetChoiceChip({ label: '3', active: this.app.speedTestConcurrency === 3, onPick: () => {
+            this.app.setSpeedTestConcurrency(3);
+          } })
+          SetChoiceChip({ label: '4', active: this.app.speedTestConcurrency === 4, onPick: () => {
+            this.app.setSpeedTestConcurrency(4);
+          } })
+          SetChoiceChip({ label: '6', active: this.app.speedTestConcurrency === 6, onPick: () => {
+            this.app.setSpeedTestConcurrency(6);
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(AppTheme.CARD_BG)
+      .borderRadius(AppTheme.CARD_RADIUS)
+      .margin({ top: 14 })
+      .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
+
+      Text('包越大测速越准但耗时与流量消耗越多；先用 Cloudflare 测速文件，失败时回退 OVH。测速方法为先预热不计速、再测稳态速率，与 Speedtest 同类。并发大于 1 时多个节点同时下载会分抢带宽，测得的速率可能偏低，追求精确数值请选并发 1。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')

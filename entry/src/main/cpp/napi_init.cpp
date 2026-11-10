@@ -1,7 +1,7 @@
 #include "napi/native_api.h"
 #include "libxray.h"
 
-#define XRAY_CORE_VERSION "v1.261031.0"
+#define XRAY_CORE_VERSION "v1.261109.0"
 #define SINGBOX_CORE_VERSION "sing-box v1.14.4"
 
 static char *CopyStringArg(napi_env env, napi_value value)

@@ -1,5 +1,6 @@
 import { vpnExtension, statistics } from '@kit.NetworkKit';
-import { Want, common, ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
+import { Want, common, ConfigurationConstant, bundleManager, wantAgent, WantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
@@ -9,10 +10,11 @@ import { SubGroup } from '../model/SubGroup';
 import { RoutingOptions, GeoOptions, BackupPayload } from '../model/ProxyOptions';
 import { parseSubscription } from './V2rayParser';
 import { buildVpnConfigPair, buildTestConfigPair } from './XrayConf';
-import { usesSingboxKernel } from './SingboxConf';
+import { usesSingboxKernel, TEST_SINGBOX_PORT } from './SingboxConf';
 import { AppStore } from './AppStore';
 import { SubscriptionFetcher } from './SubscriptionFetcher';
 import { AppTheme } from './AppTheme';
+import { AppContextHolder } from './AppContextHolder';
 
 const VPN_WANT: Want = {
   bundleName: 'com.xii.v2rayh',
@@ -35,7 +37,7 @@ const F_XRAY_LOG: string = 'xray_error.log';
 const F_MULTI: string = 'multi_select.json';
 const F_SINGBOX_CONFIG: string = 'singbox_config.json';
 
-const PING_CONCURRENCY: number = 5;
+const PING_CONCURRENCY: number = 16;
 const CHAINED_PING_TIMEOUT_MS: number = 10000;
 
 const FAILOVER_CHECK_MS: number = 45000;
@@ -61,7 +63,9 @@ class PrefsOptions {
   autoUpdateSubs: boolean = false;
   autoConnect: boolean = false;
   failover: boolean = false;
+  keepAlive: boolean = false;
   speedTestMB: number = 20;
+  speedTestConcurrency: number = 3;
 }
 
 class PerAppOptions {
@@ -140,6 +144,11 @@ export class AppState {
   failover: boolean = false;
   // 下载测速单节点数据量上限（MB），可自定义
   speedTestMB: number = 20;
+  // 下载测速同时测试的节点数，节点多时成倍缩短总耗时
+  speedTestConcurrency: number = 3;
+  // 后台保活：连接期间申请 DATA_TRANSFER 长时任务，防止退后台后进程被冻结
+  keepAlive: boolean = false;
+  private keepAliveTaskOn: boolean = false;
   private failoverTimerId: number = -1;
   private failoverFails: number = 0;
   private failoverCooldownUntil: number = 0;
@@ -208,7 +217,9 @@ export class AppState {
         this.autoUpdateSubs = p.autoUpdateSubs === true;
         this.autoConnect = p.autoConnect === true;
         this.failover = p.failover === true;
+        this.keepAlive = p.keepAlive === true;
         this.speedTestMB = this.normalizeSpeedTestMB(p.speedTestMB);
+        this.speedTestConcurrency = this.normalizeSpeedTestConcurrency(p.speedTestConcurrency);
       } catch (e) {
         console.error('parse prefs failed: ' + JSON.stringify(e));
       }
@@ -220,7 +231,9 @@ export class AppState {
     p.autoUpdateSubs = this.autoUpdateSubs;
     p.autoConnect = this.autoConnect;
     p.failover = this.failover;
+    p.keepAlive = this.keepAlive;
     p.speedTestMB = this.speedTestMB;
+    p.speedTestConcurrency = this.speedTestConcurrency;
     this.store.writeText(F_PREFS, JSON.stringify(p));
   }
 
@@ -244,6 +257,62 @@ export class AppState {
     }
   }
 
+  setKeepAlive(v: boolean): void {
+    this.keepAlive = v;
+    this.savePrefs();
+    if (v) {
+      this.startKeepAliveTask();
+    } else {
+      this.stopKeepAliveTask();
+    }
+  }
+
+  // ---------- keep alive ----------
+
+  private async startKeepAliveTask(): Promise<void> {
+    if (!this.keepAlive || !this.connected || this.keepAliveTaskOn) {
+      return;
+    }
+    let ctx = AppContextHolder.get();
+    if (ctx === undefined) {
+      return;
+    }
+    let wantAgentInfo: wantAgent.WantAgentInfo = {
+      wants: [{
+        bundleName: 'com.xii.v2rayh',
+        abilityName: 'EntryAbility'
+      }],
+      operationType: wantAgent.OperationType.START_ABILITY,
+      requestCode: 0
+    };
+    try {
+      let agent: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
+      await backgroundTaskManager.startBackgroundRunning(ctx,
+        backgroundTaskManager.BackgroundMode.DATA_TRANSFER, agent);
+      this.keepAliveTaskOn = true;
+      this.appendRuntimeLog('[keepalive] 后台保活长时任务已开启');
+    } catch (e) {
+      console.error('start keep-alive task failed: ' + JSON.stringify(e));
+    }
+  }
+
+  private async stopKeepAliveTask(): Promise<void> {
+    if (!this.keepAliveTaskOn) {
+      return;
+    }
+    this.keepAliveTaskOn = false;
+    let ctx = AppContextHolder.get();
+    if (ctx === undefined) {
+      return;
+    }
+    try {
+      await backgroundTaskManager.stopBackgroundRunning(ctx);
+      this.appendRuntimeLog('[keepalive] 后台保活长时任务已停止');
+    } catch (e) {
+      console.error('stop keep-alive task failed: ' + JSON.stringify(e));
+    }
+  }
+
   private normalizeSpeedTestMB(v: number): number {
     if (typeof v !== 'number' || isNaN(v) || v < 10) {
       return 20;
@@ -256,6 +325,21 @@ export class AppState {
 
   setSpeedTestMB(mb: number): void {
     this.speedTestMB = this.normalizeSpeedTestMB(mb);
+    this.savePrefs();
+  }
+
+  private normalizeSpeedTestConcurrency(v: number): number {
+    if (typeof v !== 'number' || isNaN(v) || v < 1) {
+      return 3;
+    }
+    if (v > 6) {
+      return 6;
+    }
+    return Math.round(v);
+  }
+
+  setSpeedTestConcurrency(n: number): void {
+    this.speedTestConcurrency = this.normalizeSpeedTestConcurrency(n);
     this.savePrefs();
   }
 
@@ -458,6 +542,7 @@ export class AppState {
     s.address = raw.address !== undefined ? raw.address : '';
     s.port = raw.port !== undefined ? raw.port : 0;
     s.uuid = raw.uuid !== undefined ? raw.uuid : '';
+    s.username = raw.username !== undefined ? raw.username : '';
     s.password = raw.password !== undefined ? raw.password : '';
     s.method = raw.method !== undefined ? raw.method : '';
     s.alterId = raw.alterId !== undefined ? raw.alterId : 0;
@@ -478,6 +563,9 @@ export class AppState {
     s.insecure = raw.insecure === true;
     s.alpn = raw.alpn !== undefined ? raw.alpn : '';
     s.ports = raw.ports !== undefined ? raw.ports : '';
+    s.seed = raw.seed !== undefined ? raw.seed : '';
+    s.scy = raw.scy !== undefined ? raw.scy : '';
+    s.congestionControl = raw.congestionControl !== undefined ? raw.congestionControl : '';
     return s;
   }
 
@@ -742,8 +830,32 @@ export class AppState {
   }
 
   downloadTargetsCount(): number {
-    let n: number = this.multiCount();
-    return n > 0 ? n : this.servers.length;
+    return this.downloadTargetIndices().length;
+  }
+
+  downloadTargetIndices(): number[] {
+    let selected: number[] = this.multiIndices();
+    if (selected.length > 0) {
+      return selected;
+    }
+    let out: number[] = [];
+    for (let i = 0; i < this.servers.length; i++) {
+      if (i < this.pings.length && this.pings[i] === -1) {
+        continue;
+      }
+      out.push(i);
+    }
+    return out;
+  }
+
+  pingTimeoutCount(): number {
+    let n: number = 0;
+    for (let i = 0; i < this.servers.length && i < this.pings.length; i++) {
+      if (this.pings[i] === -1) {
+        n++;
+      }
+    }
+    return n;
   }
 
   speedText(idx: number): string {
@@ -956,11 +1068,13 @@ export class AppState {
       this.startFailoverMonitor();
       this.beginTrafficSession();
       this.refreshExitIp();
+      this.startKeepAliveTask();
     } else {
       this.connected = false;
       this.ipBusy = false;
       this.endTrafficSession();
       this.stopFailoverMonitor();
+      this.stopKeepAliveTask();
       this.status = '切换节点失败，请重试';
     }
   }
@@ -986,7 +1100,17 @@ export class AppState {
         return body;
       }
     }
-    return SubscriptionFetcher.fetchText(url);
+    let last: string = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      last = await SubscriptionFetcher.fetchText(url);
+      if (last.length > 0) {
+        return last;
+      }
+      if (attempt < 2) {
+        await sleepMs(800);
+      }
+    }
+    return last;
   }
 
   async updateGroupSubscription(index: number): Promise<void> {
@@ -1167,6 +1291,25 @@ export class AppState {
     }
   }
 
+  private pickFailoverTarget(): number {
+    let best: number = -1;
+    let bestPing: number = -1;
+    for (let i = 0; i < this.servers.length; i++) {
+      if (i === this.selected) {
+        continue;
+      }
+      let ping: number = i < this.pings.length ? this.pings[i] : -3;
+      if (ping >= 0 && (best < 0 || ping < bestPing)) {
+        best = i;
+        bestPing = ping;
+      }
+    }
+    if (best >= 0) {
+      return best;
+    }
+    return (this.selected + 1) % this.servers.length;
+  }
+
   private doFailoverSwitch(badName: string): void {
     this.failoverFails = 0;
     this.failoverCooldownUntil = Date.now() + FAILOVER_COOLDOWN_MS;
@@ -1181,7 +1324,7 @@ export class AppState {
       this.stopFailoverMonitor();
       return;
     }
-    let next: number = (this.selected + 1) % this.servers.length;
+    let next: number = this.pickFailoverTarget();
     let nextName: string = this.servers[next].name;
     this.failoverSwitchCount++;
     this.appendRuntimeLog('[failover] 自动切换 ' + badName + ' -> ' + nextName);
@@ -1335,35 +1478,26 @@ export class AppState {
     this.status = '正在测延迟...';
     try {
       let done = 0;
+      let sbPortOffset = 0;
       for (let c = 0; c < targets.length; c += PING_CONCURRENCY) {
         let chunk: number[] = targets.slice(c, c + PING_CONCURRENCY);
-        let xrayTargets: number[] = [];
-        let sbTargets: number[] = [];
+        let jobs: Promise<number>[] = [];
         for (let j = 0; j < chunk.length; j++) {
-          if (this.isNodeSingbox(chunk[j])) {
-            sbTargets.push(chunk[j]);
+          let idx = chunk[j];
+          if (this.isNodeSingbox(idx)) {
+            jobs.push(this.chainedPingServer(this.servers[idx], TEST_SINGBOX_PORT + 1 + sbPortOffset));
+            sbPortOffset++;
           } else {
-            xrayTargets.push(chunk[j]);
+            jobs.push(this.chainedPingServer(this.servers[idx]));
           }
         }
-        let jobs: Promise<number>[] = [];
-        for (let j = 0; j < xrayTargets.length; j++) {
-          jobs.push(this.chainedPingServer(this.servers[xrayTargets[j]]));
-        }
-        let xrayResults: number[] = await Promise.all(jobs);
-        let sbResults: number[] = [];
-        for (let j = 0; j < sbTargets.length; j++) {
-          sbResults.push(await this.chainedPingServer(this.servers[sbTargets[j]]));
-        }
+        let results: number[] = await Promise.all(jobs);
         let copy: number[] = [];
         for (let j = 0; j < this.pings.length; j++) {
           copy.push(this.pings[j]);
         }
-        for (let j = 0; j < xrayTargets.length; j++) {
-          copy[xrayTargets[j]] = xrayResults[j];
-        }
-        for (let j = 0; j < sbTargets.length; j++) {
-          copy[sbTargets[j]] = sbResults[j];
+        for (let j = 0; j < chunk.length; j++) {
+          copy[chunk[j]] = results[j];
         }
         this.pings = copy;
         done += chunk.length;
@@ -1379,8 +1513,8 @@ export class AppState {
     }
   }
 
-  private async chainedPingServer(srv: ServerConfig): Promise<number> {
-    let pair = buildTestConfigPair(srv);
+  private async chainedPingServer(srv: ServerConfig, singboxListenPort: number = TEST_SINGBOX_PORT): Promise<number> {
+    let pair = buildTestConfigPair(srv, singboxListenPort);
     let timeout: Promise<number> = sleepMs(CHAINED_PING_TIMEOUT_MS).then((): number => -999);
     try {
       let ms: number = await Promise.race([
@@ -1397,11 +1531,10 @@ export class AppState {
     if (this.servers.length === 0 || this.busy || this.testing || this.downloadTesting) {
       return;
     }
-    let targets: number[] = this.multiIndices();
+    let targets: number[] = this.downloadTargetIndices();
     if (targets.length === 0) {
-      for (let i = 0; i < this.servers.length; i++) {
-        targets.push(i);
-      }
+      this.status = '测下载跳过: 延迟测速均超时，无可测节点';
+      return;
     }
     let init: number[] = [];
     for (let i = 0; i < this.servers.length; i++) {
@@ -1415,42 +1548,35 @@ export class AppState {
     this.busy = true;
     let ok = 0;
     try {
-      for (let c = 0; c < targets.length; c++) {
-        let idx = targets[c];
-        let srv = this.servers[idx];
-        this.status = '正在测下载 (' + (c + 1).toString() + '/' + targets.length.toString() + '): ' + srv.name;
-        let pair = buildTestConfigPair(srv);
-        let bps: number = -1;
-        let mb: number = this.speedTestMB;
-        let ovhFile: string = '1Gb.dat';
-        if (mb <= 10) {
-          ovhFile = '10Mb.dat';
-        } else if (mb <= 100) {
-          ovhFile = '100Mb.dat';
-        }
-        let urls: string[] = [
-          'http://speed.cloudflare.com/__down?bytes=' + (mb * 1000000).toString(),
-          'http://proof.ovh.net/files/' + ovhFile
-        ];
-        for (let i = 0; i < urls.length; i++) {
-          try {
-            bps = await testNapi.measureDownload(pair.xrayConfig, pair.singboxConfig, urls[i], mb * 1024 * 1024);
-          } catch (e) {
-            bps = -1;
-          }
-          if (bps > 0) {
-            break;
+      let done = 0;
+      let sbPortOffset = 0;
+      let concurrency: number = this.speedTestConcurrency;
+      for (let c = 0; c < targets.length; c += concurrency) {
+        let chunk: number[] = targets.slice(c, c + concurrency);
+        let jobs: Promise<number>[] = [];
+        for (let j = 0; j < chunk.length; j++) {
+          let idx = chunk[j];
+          if (this.isNodeSingbox(idx)) {
+            jobs.push(this.chainedDownloadServer(this.servers[idx], TEST_SINGBOX_PORT + 1 + sbPortOffset));
+            sbPortOffset++;
+          } else {
+            jobs.push(this.chainedDownloadServer(this.servers[idx], TEST_SINGBOX_PORT));
           }
         }
+        let results: number[] = await Promise.all(jobs);
         let copy: number[] = [];
         for (let j = 0; j < this.speeds.length; j++) {
           copy.push(this.speeds[j]);
         }
-        copy[idx] = bps > 0 ? bps : -1;
-        this.speeds = copy;
-        if (bps > 0) {
-          ok++;
+        for (let j = 0; j < chunk.length; j++) {
+          copy[chunk[j]] = results[j] > 0 ? results[j] : -1;
+          if (results[j] > 0) {
+            ok++;
+          }
         }
+        this.speeds = copy;
+        done += chunk.length;
+        this.status = '正在测下载 ' + done.toString() + '/' + targets.length.toString() + '...';
       }
       this.status = '测下载完成: ' + ok.toString() + '/' + targets.length.toString() + ' 个节点成功';
     } finally {
@@ -1460,6 +1586,33 @@ export class AppState {
     if (this.servers.length > 1 && this.sortPromptHandler !== null) {
       this.sortPromptHandler('download');
     }
+  }
+
+  private async chainedDownloadServer(srv: ServerConfig, singboxListenPort: number): Promise<number> {
+    let pair = buildTestConfigPair(srv, singboxListenPort);
+    let mb: number = this.speedTestMB;
+    let ovhFile: string = '1Gb.dat';
+    if (mb <= 10) {
+      ovhFile = '10Mb.dat';
+    } else if (mb <= 100) {
+      ovhFile = '100Mb.dat';
+    }
+    let urls: string[] = [
+      'http://speed.cloudflare.com/__down?bytes=' + (mb * 1000000).toString(),
+      'http://proof.ovh.net/files/' + ovhFile
+    ];
+    for (let i = 0; i < urls.length; i++) {
+      let bps: number = -1;
+      try {
+        bps = await testNapi.measureDownload(pair.xrayConfig, pair.singboxConfig, urls[i], mb * 1024 * 1024);
+      } catch (e) {
+        bps = -1;
+      }
+      if (bps > 0) {
+        return bps;
+      }
+    }
+    return -1;
   }
 
   // ---------- connection ----------
@@ -1566,11 +1719,13 @@ export class AppState {
       this.startFailoverMonitor();
       this.beginTrafficSession();
       this.refreshExitIp();
+      this.startKeepAliveTask();
     } else {
       this.connected = false;
       this.ipBusy = false;
       this.endTrafficSession();
       this.stopFailoverMonitor();
+      this.stopKeepAliveTask();
       this.status = '连接失败，请重试';
     }
   }
@@ -1580,6 +1735,7 @@ export class AppState {
     this.ipError = '';
     this.ipBusy = false;
     this.stopFailoverMonitor();
+    this.stopKeepAliveTask();
     this.failoverSwitchCount = 0;
     vpnExtension.stopVpnExtensionAbility(VPN_WANT).then(() => {
       this.connected = false;

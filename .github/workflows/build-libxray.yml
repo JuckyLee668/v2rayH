@@ -37,7 +37,7 @@ permissions:
 env:
   OHOS_GO_VERSION: ${{ github.event.inputs.ohos_go_version || 'v1.27.2-ohos-beta1' }}
   OHOS_SDK_VERSION: ${{ github.event.inputs.ohos_sdk_version || '6.1-Release' }}
-  XRAY_VERSION: v1.261031.0
+  XRAY_VERSION: v1.261109.0
 
 jobs:
   build:

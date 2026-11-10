@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want, Configuration 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { window } from '@kit.ArkUI';
+import { AppContextHolder } from '../common/AppContextHolder';
 
 const DOMAIN = 0x0000;
 
@@ -19,6 +20,7 @@ function syncAvoidArea(win: window.Window): void {
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    AppContextHolder.set(this.context);
     AppStorage.setOrCreate('systemDarkFlag',
       this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
   }
@@ -81,8 +83,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   onBackground(): void {
-    // Ability has back to background; the VPN extension keeps the tunnel alive,
-    // so the UI process is allowed to be frozen by the system to save power.
+    // Ability has back to background; the VPN extension keeps the tunnel alive.
+    // When "后台保活" is enabled a DATA_TRANSFER continuous task is already
+    // running (started at connect), so this process stays unfrozen.
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
 }

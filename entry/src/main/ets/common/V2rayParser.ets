@@ -15,6 +15,7 @@ interface VmessJson {
   tls?: string;
   sni?: string;
   fp?: string;
+  alpn?: string;
 }
 
 function b64Decode(input: string): string {
@@ -63,6 +64,7 @@ export function buildShareLink(s: ServerConfig): string {
     if (s.headerType.length > 0 && s.headerType !== 'none') {
       appendParam(q, 'headerType', s.headerType);
     }
+    appendParam(q, 'seed', s.seed);
     appendParam(q, 'path', s.path);
     appendParam(q, 'host', s.host);
     return 'vless://' + s.uuid + '@' + s.address + ':' + s.port.toString()
@@ -75,7 +77,7 @@ export function buildShareLink(s: ServerConfig): string {
     v.port = s.port.toString();
     v.id = s.uuid;
     v.aid = s.alterId.toString();
-    v.scy = 'auto';
+    v.scy = s.scy.length > 0 ? s.scy : 'auto';
     v.net = s.network.length > 0 ? s.network : 'tcp';
     v.type = s.headerType.length > 0 ? s.headerType : 'none';
     v.host = s.host;
@@ -83,6 +85,7 @@ export function buildShareLink(s: ServerConfig): string {
     v.tls = s.security === 'tls' ? 'tls' : '';
     v.sni = s.sni;
     v.fp = s.fp;
+    v.alpn = s.alpn;
     return 'vmess://' + b64Encode(JSON.stringify(v));
   }
   if (s.protocol === 'trojan') {
@@ -118,12 +121,52 @@ export function buildShareLink(s: ServerConfig): string {
     let q: string[] = [];
     appendParam(q, 'sni', s.sni);
     appendParam(q, 'alpn', s.alpn);
+    appendParam(q, 'congestion_control', s.congestionControl);
     if (s.insecure) {
       q.push('allow_insecure=1');
     }
     return 'tuic://' + s.uuid + ':' + encodeURIComponent(s.password) + '@' + s.address + ':'
       + s.port.toString() + (q.length > 0 ? ('?' + q.join('&')) : '')
       + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'anytls') {
+    let q: string[] = [];
+    appendParam(q, 'sni', s.sni);
+    if (s.insecure) {
+      q.push('insecure=1');
+    }
+    appendParam(q, 'alpn', s.alpn);
+    return 'anytls://' + encodeURIComponent(s.password) + '@' + s.address + ':'
+      + s.port.toString() + (q.length > 0 ? ('?' + q.join('&')) : '')
+      + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'http') {
+    let q: string[] = [];
+    if (s.security === 'tls') {
+      q.push('security=tls');
+    }
+    appendParam(q, 'sni', s.sni);
+    if (s.insecure) {
+      q.push('insecure=1');
+    }
+    let auth = (s.username.length > 0 || s.password.length > 0)
+      ? encodeURIComponent(s.username) + ':' + encodeURIComponent(s.password) + '@' : '';
+    return 'http://' + auth + s.address + ':' + s.port.toString()
+      + (q.length > 0 ? ('?' + q.join('&')) : '') + '#' + encodeURIComponent(defaultNodeName(s));
+  }
+  if (s.protocol === 'socks') {
+    let q: string[] = [];
+    if (s.security === 'tls') {
+      q.push('security=tls');
+    }
+    appendParam(q, 'sni', s.sni);
+    if (s.insecure) {
+      q.push('insecure=1');
+    }
+    let auth = (s.username.length > 0 || s.password.length > 0)
+      ? encodeURIComponent(s.username) + ':' + encodeURIComponent(s.password) + '@' : '';
+    return 'socks://' + auth + s.address + ':' + s.port.toString()
+      + (q.length > 0 ? ('?' + q.join('&')) : '') + '#' + encodeURIComponent(defaultNodeName(s));
   }
   return '';
 }
@@ -195,6 +238,7 @@ function parseVless(link: string): ServerConfig | undefined {
   if (s.headerType.length === 0) { s.headerType = 'none'; }
   s.path = getParam(parts[1], 'path');
   s.host = getParam(parts[1], 'host');
+  s.seed = getParam(parts[1], 'seed');
   return s;
 }
 
@@ -217,6 +261,8 @@ function parseVmess(link: string): ServerConfig | undefined {
   s.path = v.path ? v.path : '';
   s.sni = v.sni ? v.sni : '';
   s.fp = v.fp ? v.fp : '';
+  s.alpn = v.alpn ? v.alpn : '';
+  s.scy = v.scy ? v.scy : '';
   s.security = (v.tls && v.tls.length > 0) ? 'tls' : 'none';
   return s;
 }
@@ -338,6 +384,7 @@ function parseTuic(link: string): ServerConfig | undefined {
     s.sni = getParam(parts[1], 'peer');
   }
   s.alpn = getParam(parts[1], 'alpn');
+  s.congestionControl = getParam(parts[1], 'congestion_control');
   let ins = getParam(parts[1], 'allow_insecure');
   if (ins.length === 0) {
     ins = getParam(parts[1], 'insecure');
@@ -346,6 +393,86 @@ function parseTuic(link: string): ServerConfig | undefined {
     s.insecure = true;
   }
   return s;
+}
+
+function parseAnytls(link: string): ServerConfig | undefined {
+  let parts = splitName(link, 'anytls://'.length);
+  let atIdx = parts[0].lastIndexOf('@');
+  if (atIdx < 0) {
+    return undefined;
+  }
+  let s = new ServerConfig();
+  s.protocol = 'anytls';
+  s.password = decodeURIComponent(parts[0].substring(0, atIdx));
+  let hp = parseHostPort(parts[0].substring(atIdx + 1));
+  s.address = hp[0];
+  s.port = parseInt(hp[1], 10);
+  s.name = parts[2].length > 0 ? parts[2] : (s.address + ':' + s.port.toString());
+  s.security = 'tls';
+  s.sni = getParam(parts[1], 'sni');
+  if (s.sni.length === 0) {
+    s.sni = getParam(parts[1], 'peer');
+  }
+  s.alpn = getParam(parts[1], 'alpn');
+  let ins = getParam(parts[1], 'insecure');
+  if (ins.length === 0) {
+    ins = getParam(parts[1], 'allow_insecure');
+  }
+  if (ins === '1' || ins === 'true') {
+    s.insecure = true;
+  }
+  return s;
+}
+
+function parsePlainProxy(link: string, schemeLen: number, protocol: string, defaultPort: number,
+  forceTls: boolean): ServerConfig | undefined {
+  let parts = splitName(link, schemeLen);
+  let s = new ServerConfig();
+  s.protocol = protocol;
+  let hpStr = parts[0];
+  let atIdx = parts[0].lastIndexOf('@');
+  if (atIdx >= 0) {
+    let userinfo = decodeURIComponent(parts[0].substring(0, atIdx));
+    let colonIdx = userinfo.indexOf(':');
+    s.username = colonIdx >= 0 ? userinfo.substring(0, colonIdx) : userinfo;
+    s.password = colonIdx >= 0 ? userinfo.substring(colonIdx + 1) : '';
+    hpStr = parts[0].substring(atIdx + 1);
+  }
+  let colonIdx = hpStr.lastIndexOf(':');
+  if (colonIdx < 0) {
+    s.address = hpStr;
+    s.port = defaultPort;
+  } else {
+    s.address = hpStr.substring(0, colonIdx);
+    s.port = parseInt(hpStr.substring(colonIdx + 1), 10);
+    if (isNaN(s.port) || s.port <= 0) {
+      s.port = defaultPort;
+    }
+  }
+  s.name = parts[2].length > 0 ? parts[2] : (s.address + ':' + s.port.toString());
+  s.network = 'tcp';
+  if (forceTls) {
+    s.security = 'tls';
+  } else {
+    s.security = getParam(parts[1], 'security');
+    if (s.security.length === 0) {
+      s.security = 'none';
+    }
+  }
+  if (s.security === 'tls' || s.security === 'reality') {
+    s.sni = getParam(parts[1], 'sni');
+    if (s.sni.length === 0) {
+      s.sni = getParam(parts[1], 'peer');
+    }
+    let ins = getParam(parts[1], 'allowInsecure');
+    if (ins.length === 0) {
+      ins = getParam(parts[1], 'insecure');
+    }
+    if (ins === '1' || ins === 'true') {
+      s.insecure = true;
+    }
+  }
+  return s.address.length > 0 ? s : undefined;
 }
 
 export function parseShareLink(link: string): ServerConfig | undefined {
@@ -370,6 +497,21 @@ export function parseShareLink(link: string): ServerConfig | undefined {
   }
   if (l.startsWith('tuic://')) {
     return parseTuic(l);
+  }
+  if (l.startsWith('anytls://')) {
+    return parseAnytls(l);
+  }
+  if (l.startsWith('http://')) {
+    return parsePlainProxy(l, 'http://'.length, 'http', 80, false);
+  }
+  if (l.startsWith('https://')) {
+    return parsePlainProxy(l, 'https://'.length, 'http', 443, true);
+  }
+  if (l.startsWith('socks://')) {
+    return parsePlainProxy(l, 'socks://'.length, 'socks', 1080, false);
+  }
+  if (l.startsWith('socks5://')) {
+    return parsePlainProxy(l, 'socks5://'.length, 'socks', 1080, false);
   }
   return undefined;
 }

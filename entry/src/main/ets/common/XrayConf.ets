@@ -18,6 +18,21 @@ export function buildSocksProxyOutbound(addr: string, port: number): string {
     + ',' + q('tag') + ':' + q('proxy') + '}';
 }
 
+function alpnArray(alpn: string): string {
+  if (alpn.length === 0) {
+    return '';
+  }
+  let items: string[] = [];
+  let raw = alpn.split(',');
+  for (let i = 0; i < raw.length; i++) {
+    let t = raw[i].trim();
+    if (t.length > 0) {
+      items.push(q(t));
+    }
+  }
+  return items.length > 0 ? ('[' + items.join(',') + ']') : '';
+}
+
 function buildStreamSettings(s: ServerConfig): string {
   let net = s.network.length > 0 ? s.network : 'tcp';
   let parts: string[] = [];
@@ -33,7 +48,35 @@ function buildStreamSettings(s: ServerConfig): string {
     parts.push(q('wsSettings') + ':' + ws);
   } else if (net === 'grpc') {
     parts.push(q('grpcSettings') + ':{' + q('serviceName') + ':' + q(s.path) + '}');
+  } else if (net === 'httpupgrade') {
+    let hu = '{' + q('path') + ':' + q(s.path.length > 0 ? s.path : '/');
+    if (s.host.length > 0) {
+      hu += ',' + q('host') + ':' + q(s.host);
+    }
+    hu += '}';
+    parts.push(q('httpupgradeSettings') + ':' + hu);
+  } else if (net === 'xhttp') {
+    let xh = '{' + q('path') + ':' + q(s.path.length > 0 ? s.path : '/');
+    if (s.host.length > 0) {
+      xh += ',' + q('host') + ':' + q(s.host);
+    }
+    xh += '}';
+    parts.push(q('xhttpSettings') + ':' + xh);
+  } else if (net === 'kcp') {
+    let ks = '{' + q('header') + ':{' + q('type') + ':'
+      + q(s.headerType.length > 0 ? s.headerType : 'none') + '}';
+    if (s.seed.length > 0) {
+      ks += ',' + q('seed') + ':' + q(s.seed);
+    }
+    ks += '}';
+    parts.push(q('kcpSettings') + ':' + ks);
+  } else if (net === 'tcp') {
+    if (s.headerType.length > 0 && s.headerType !== 'none') {
+      parts.push(q('tcpSettings') + ':{' + q('header') + ':{' + q('type') + ':' + q(s.headerType) + '}}');
+    }
   }
+
+  let alpn = alpnArray(s.alpn);
 
   if (s.security === 'reality') {
     let rs = '{';
@@ -42,6 +85,9 @@ function buildStreamSettings(s: ServerConfig): string {
     rs += ',' + q('publicKey') + ':' + q(s.pbk);
     rs += ',' + q('shortId') + ':' + q(s.sid);
     rs += ',' + q('spiderX') + ':' + q(s.spx);
+    if (alpn.length > 0) {
+      rs += ',' + q('alpn') + ':' + alpn;
+    }
     rs += '}';
     parts.push(q('security') + ':' + q('reality'));
     parts.push(q('realitySettings') + ':' + rs);
@@ -51,10 +97,15 @@ function buildStreamSettings(s: ServerConfig): string {
     if (s.fp.length > 0) {
       ts += ',' + q('fingerprint') + ':' + q(s.fp);
     }
+    if (alpn.length > 0) {
+      ts += ',' + q('alpn') + ':' + alpn;
+    }
     ts += '}';
     parts.push(q('security') + ':' + q('tls'));
     parts.push(q('tlsSettings') + ':' + ts);
   }
+
+  parts.push(q('sockopt') + ':{' + q('tcpKeepAliveIdle') + ':60,' + q('tcpKeepAliveInterval') + ':15}');
 
   return '{' + parts.join(',') + '}';
 }
@@ -71,7 +122,8 @@ function buildProxyOutbound(s: ServerConfig): string {
     let vnext = '{' + q('address') + ':' + q(s.address) + ',' + q('port') + ':' + s.port.toString() + ',' + q('users') + ':[' + user + ']}';
     body = '{' + q('protocol') + ':' + q('vless') + ',' + q('settings') + ':{' + q('vnext') + ':[' + vnext + ']},' + q('streamSettings') + ':' + stream + '}';
   } else if (s.protocol === 'vmess') {
-    let user = '{' + q('id') + ':' + q(s.uuid) + ',' + q('alterId') + ':' + s.alterId.toString() + ',' + q('security') + ':' + q('auto') + '}';
+    let user = '{' + q('id') + ':' + q(s.uuid) + ',' + q('alterId') + ':' + s.alterId.toString()
+      + ',' + q('security') + ':' + q(s.scy.length > 0 ? s.scy : 'auto') + '}';
     let vnext = '{' + q('address') + ':' + q(s.address) + ',' + q('port') + ':' + s.port.toString() + ',' + q('users') + ':[' + user + ']}';
     body = '{' + q('protocol') + ':' + q('vmess') + ',' + q('settings') + ':{' + q('vnext') + ':[' + vnext + ']},' + q('streamSettings') + ':' + stream + '}';
   } else if (s.protocol === 'trojan') {
@@ -80,6 +132,14 @@ function buildProxyOutbound(s: ServerConfig): string {
   } else if (s.protocol === 'shadowsocks') {
     let server = '{' + q('address') + ':' + q(s.address) + ',' + q('port') + ':' + s.port.toString() + ',' + q('method') + ':' + q(s.method) + ',' + q('password') + ':' + q(s.password) + '}';
     body = '{' + q('protocol') + ':' + q('shadowsocks') + ',' + q('settings') + ':{' + q('servers') + ':[' + server + ']}}';
+  } else if (s.protocol === 'http' || s.protocol === 'socks') {
+    let server = '{' + q('address') + ':' + q(s.address) + ',' + q('port') + ':' + s.port.toString();
+    if (s.username.length > 0 || s.password.length > 0) {
+      server += ',' + q('users') + ':[{' + q('user') + ':' + q(s.username) + ',' + q('pass') + ':' + q(s.password) + '}]';
+    }
+    server += '}';
+    body = '{' + q('protocol') + ':' + q(s.protocol) + ',' + q('settings') + ':{' + q('servers') + ':[' + server + ']}'
+      + ',' + q('streamSettings') + ':' + stream + '}';
   } else {
     body = '{' + q('protocol') + ':' + q('freedom') + '}';
   }
@@ -139,17 +199,20 @@ export function buildTestConfig(server: ServerConfig): string {
   return '{' + q('outbounds') + ':[' + buildProxyOutbound(server) + ']}';
 }
 
-export function buildTestConfigPair(server: ServerConfig): ConfigPair {
+export function buildTestConfigPair(server: ServerConfig, singboxListenPort: number = TEST_SINGBOX_PORT): ConfigPair {
   let pair = new ConfigPair();
   if (usesSingboxKernel(server)) {
     pair.xrayConfig = '{' + q('outbounds') + ':['
-      + buildSocksProxyOutbound('127.0.0.1', TEST_SINGBOX_PORT) + ']}';
-    pair.singboxConfig = buildTestSingboxConfig(server);
+      + buildSocksProxyOutbound('127.0.0.1', singboxListenPort) + ']}';
+    pair.singboxConfig = buildTestSingboxConfig(server, singboxListenPort);
   } else {
     pair.xrayConfig = buildTestConfig(server);
   }
   return pair;
 }
+
+const WEAK_LINK_POLICY: string =
+  '{"levels":{"0":{"handshake":10,"connIdle":180,"uplinkOnly":3,"downlinkOnly":10}}}';
 
 function buildVpnXrayConfig(proxyOutbound: string, logErrorPath: string, routing: RoutingOptions): string {
   let logCfg = '{' + q('loglevel') + ':' + q('error');
@@ -162,6 +225,7 @@ function buildVpnXrayConfig(proxyOutbound: string, logErrorPath: string, routing
     outbounds += ',' + BLOCK_OUTBOUND;
   }
   return '{' + q('log') + ':' + logCfg
+    + ',' + q('policy') + ':' + WEAK_LINK_POLICY
     + ',' + q('inbounds') + ':[' + TUN_INBOUND + ',' + LOCAL_PROXY_INBOUND + ']'
     + ',' + q('outbounds') + ':[' + outbounds + ']'
     + ',' + q('routing') + ':' + buildRouting(routing)

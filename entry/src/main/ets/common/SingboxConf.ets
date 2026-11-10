@@ -12,7 +12,7 @@ export function usesSingboxKernel(s: ServerConfig): boolean {
   if (s.kernel === 'xray') {
     return false;
   }
-  return s.protocol === 'hy2' || s.protocol === 'tuic';
+  return s.protocol === 'hy2' || s.protocol === 'tuic' || s.protocol === 'anytls';
 }
 
 function tlsFields(s: ServerConfig): string[] {
@@ -66,6 +66,14 @@ function buildTransport(s: ServerConfig): string {
   if (net === 'grpc') {
     return '{' + q('type') + ':' + q('grpc') + ',' + q('service_name') + ':' + q(s.path) + '}';
   }
+  if (net === 'httpupgrade') {
+    let hu = q('type') + ':' + q('httpupgrade');
+    hu += ',' + q('path') + ':' + q(s.path.length > 0 ? s.path : '/');
+    if (s.host.length > 0) {
+      hu += ',' + q('host') + ':' + q(s.host);
+    }
+    return '{' + hu + '}';
+  }
   return '';
 }
 
@@ -109,7 +117,8 @@ function buildProxyOutbound(s: ServerConfig): string {
     if (s.password.length > 0) {
       parts.push(q('password') + ':' + q(s.password));
     }
-    parts.push(q('congestion_control') + ':' + q('bbr'));
+    parts.push(q('congestion_control') + ':'
+      + q(s.congestionControl.length > 0 ? s.congestionControl : 'bbr'));
     let tlsFieldsJson = tlsFields(s);
     if (s.alpn.length === 0) {
       tlsFieldsJson.push(q('alpn') + ':[' + q('h3') + ']');
@@ -129,7 +138,7 @@ function buildProxyOutbound(s: ServerConfig): string {
     parts.push(q('server') + ':' + q(s.address));
     parts.push(q('server_port') + ':' + s.port.toString());
     parts.push(q('uuid') + ':' + q(s.uuid));
-    parts.push(q('security') + ':' + q('auto'));
+    parts.push(q('security') + ':' + q(s.scy.length > 0 ? s.scy : 'auto'));
     parts.push(q('alter_id') + ':' + s.alterId.toString());
   } else if (s.protocol === 'trojan') {
     parts.push(q('type') + ':' + q('trojan'));
@@ -142,6 +151,34 @@ function buildProxyOutbound(s: ServerConfig): string {
     parts.push(q('server_port') + ':' + s.port.toString());
     parts.push(q('method') + ':' + q(s.method.length > 0 ? s.method : 'aes-128-gcm'));
     parts.push(q('password') + ':' + q(s.password));
+  } else if (s.protocol === 'anytls') {
+    parts.push(q('type') + ':' + q('anytls'));
+    parts.push(q('server') + ':' + q(s.address));
+    parts.push(q('server_port') + ':' + s.port.toString());
+    if (s.password.length > 0) {
+      parts.push(q('password') + ':' + q(s.password));
+    }
+  } else if (s.protocol === 'http') {
+    parts.push(q('type') + ':' + q('http'));
+    parts.push(q('server') + ':' + q(s.address));
+    parts.push(q('server_port') + ':' + s.port.toString());
+    if (s.username.length > 0) {
+      parts.push(q('username') + ':' + q(s.username));
+    }
+    if (s.password.length > 0) {
+      parts.push(q('password') + ':' + q(s.password));
+    }
+  } else if (s.protocol === 'socks') {
+    parts.push(q('type') + ':' + q('socks'));
+    parts.push(q('server') + ':' + q(s.address));
+    parts.push(q('server_port') + ':' + s.port.toString());
+    parts.push(q('version') + ':' + q('5'));
+    if (s.username.length > 0) {
+      parts.push(q('username') + ':' + q(s.username));
+    }
+    if (s.password.length > 0) {
+      parts.push(q('password') + ':' + q(s.password));
+    }
   }
   if (s.protocol !== 'hy2' && s.protocol !== 'tuic') {
     if (s.security === 'tls' || s.security === 'reality') {
@@ -175,6 +212,6 @@ export function buildVpnSingboxConfig(s: ServerConfig): string {
   return buildFullConfig(s, VPN_SINGBOX_PORT);
 }
 
-export function buildTestSingboxConfig(s: ServerConfig): string {
-  return buildFullConfig(s, TEST_SINGBOX_PORT);
+export function buildTestSingboxConfig(s: ServerConfig, listenPort: number = TEST_SINGBOX_PORT): string {
+  return buildFullConfig(s, listenPort);
 }
