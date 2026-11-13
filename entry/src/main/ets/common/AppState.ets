@@ -6,7 +6,7 @@ import { fileIo as fs, picker } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
 import testNapi from 'libentry.so';
 import { ServerConfig } from '../model/ServerConfig';
-import { SubGroup } from '../model/SubGroup';
+import { SubGroup, SubUserinfo } from '../model/SubGroup';
 import { RoutingOptions, GeoOptions, BackupPayload } from '../model/ProxyOptions';
 import { parseSubscription } from './V2rayParser';
 import { buildVpnConfigPair, buildTestConfigPair } from './XrayConf';
@@ -575,6 +575,10 @@ export class AppState {
       let g = groups[i];
       let copy = new SubGroup(g.id, g.name !== undefined ? g.name : '', g.url !== undefined ? g.url : '');
       copy.updatedAt = g.updatedAt !== undefined ? g.updatedAt : 0;
+      copy.upload = g.upload !== undefined ? g.upload : 0;
+      copy.download = g.download !== undefined ? g.download : 0;
+      copy.total = g.total !== undefined ? g.total : 0;
+      copy.expire = g.expire !== undefined ? g.expire : 0;
       let rawNodes = g.nodes !== undefined ? g.nodes : [];
       let nodes: ServerConfig[] = [];
       for (let j = 0; j < rawNodes.length; j++) {
@@ -1129,6 +1133,7 @@ export class AppState {
     this.busy = true;
     this.status = (this.connected ? '正在通过代理更新订阅: ' : '正在更新订阅: ') + name + '...';
     let content = await this.fetchSubscriptionText(url);
+    let userinfo = this.parseSubUserinfo(SubscriptionFetcher.lastUserinfo);
     let list = parseSubscription(content);
     if (list.length === 0) {
       let reason = SubscriptionFetcher.lastError.length > 0 ? SubscriptionFetcher.lastError : '内容无法解析';
@@ -1144,6 +1149,16 @@ export class AppState {
         let copy = new SubGroup(g.id, g.name, url);
         copy.nodes = list;
         copy.updatedAt = Date.now();
+        copy.upload = g.upload !== undefined ? g.upload : 0;
+        copy.download = g.download !== undefined ? g.download : 0;
+        copy.total = g.total !== undefined ? g.total : 0;
+        copy.expire = g.expire !== undefined ? g.expire : 0;
+        if (userinfo !== undefined) {
+          copy.upload = userinfo.upload;
+          copy.download = userinfo.download;
+          copy.total = userinfo.total;
+          copy.expire = userinfo.expire;
+        }
         next.push(copy);
       } else {
         next.push(g);
@@ -1863,9 +1878,53 @@ export class AppState {
 
   // ---------- routing settings ----------
 
+  private routingReconnectPending: boolean = false;
+
   private saveRouting(): void {
     let r = this.routingOptions();
     this.store.writeText(F_ROUTING, JSON.stringify(r));
+    this.scheduleRoutingReconnect();
+  }
+
+  private scheduleRoutingReconnect(): void {
+    if (!this.connected || this.routingReconnectPending) {
+      return;
+    }
+    this.routingReconnectPending = true;
+    sleepMs(800).then(() => {
+      this.routingReconnectPending = false;
+      this.applyRoutingChange();
+    });
+  }
+
+  private async applyRoutingChange(): Promise<void> {
+    if (!this.connected) {
+      return;
+    }
+    this.applyServerConfig();
+    this.exitIp = '';
+    this.ipError = '';
+    this.ipBusy = true;
+    this.status = '正在应用分流设置';
+    try {
+      await vpnExtension.stopVpnExtensionAbility(VPN_WANT);
+    } catch (e) {
+      console.error('stopVpn during routing apply failed: ' + JSON.stringify(e));
+    }
+    await sleepMs(600);
+    let ok = await this.startVpnWithRetry(3);
+    if (ok) {
+      this.connected = true;
+      this.status = '';
+      this.refreshExitIp();
+    } else {
+      this.connected = false;
+      this.ipBusy = false;
+      this.endTrafficSession();
+      this.stopFailoverMonitor();
+      this.stopKeepAliveTask();
+      this.status = '应用分流设置失败，请重连';
+    }
   }
 
   setBypassCn(v: boolean): void {
@@ -2313,6 +2372,67 @@ export class AppState {
     let d = new Date(ts);
     return (d.getMonth() + 1).toString() + '/' + d.getDate().toString() + ' '
       + this.pad2(d.getHours()) + ':' + this.pad2(d.getMinutes());
+  }
+
+  formatDate(ts: number): string {
+    if (ts <= 0) {
+      return '';
+    }
+    let d = new Date(ts);
+    return d.getFullYear().toString() + '-' + this.pad2(d.getMonth() + 1) + '-' + this.pad2(d.getDate());
+  }
+
+  formatTraffic(bytes: number): string {
+    if (bytes <= 0) {
+      return '0 B';
+    }
+    let kb = 1024;
+    let mb = 1024 * 1024;
+    let gb = 1024 * 1024 * 1024;
+    if (bytes >= gb) {
+      return (bytes / gb).toFixed(2) + ' GB';
+    }
+    if (bytes >= mb) {
+      return (bytes / mb).toFixed(1) + ' MB';
+    }
+    if (bytes >= kb) {
+      return (bytes / kb).toFixed(0) + ' KB';
+    }
+    return bytes.toString() + ' B';
+  }
+
+  private parseSubUserinfo(raw: string): SubUserinfo | undefined {
+    if (raw.length === 0) {
+      return undefined;
+    }
+    let out = new SubUserinfo();
+    let seen = false;
+    let parts = raw.split(';');
+    for (let i = 0; i < parts.length; i++) {
+      let kv = parts[i].trim().split('=');
+      if (kv.length !== 2) {
+        continue;
+      }
+      let key = kv[0].trim().toLowerCase();
+      let val = parseInt(kv[1].trim(), 10);
+      if (isNaN(val) || val < 0) {
+        continue;
+      }
+      if (key === 'upload') {
+        out.upload = val;
+        seen = true;
+      } else if (key === 'download') {
+        out.download = val;
+        seen = true;
+      } else if (key === 'total') {
+        out.total = val;
+        seen = true;
+      } else if (key === 'expire') {
+        out.expire = val;
+        seen = true;
+      }
+    }
+    return seen ? out : undefined;
   }
 
   sizeText(bytes: number): string {

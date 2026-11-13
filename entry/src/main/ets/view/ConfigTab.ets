@@ -461,6 +461,36 @@ export struct ConfigTab {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
+        if (g.total > 0 || g.expire > 0) {
+          Column({ space: 4 }) {
+            if (g.total > 0) {
+              Progress({ value: Math.min(g.upload + g.download, g.total), total: g.total, type: ProgressType.Linear })
+                .height(4)
+                .width('100%')
+                .color((g.upload + g.download) / g.total >= 0.9 ? AppTheme.DANGER : AppTheme.PRIMARY)
+                .backgroundColor(AppTheme.CHIP_BG)
+                .borderRadius(2)
+              Row({ space: 8 }) {
+                Text('已用 ' + this.app.formatTraffic(g.upload + g.download) + ' / '
+                  + this.app.formatTraffic(g.total))
+                  .fontSize(10)
+                  .fontColor(AppTheme.TEXT_SUB)
+                Text('剩余 ' + this.app.formatTraffic(Math.max(g.total - g.upload - g.download, 0)))
+                  .fontSize(10)
+                  .fontColor(AppTheme.TEXT_SUB)
+              }
+              .width('100%')
+            }
+            if (g.expire > 0) {
+              Text((g.expire * 1000 < Date.now() ? '已过期: ' : '到期: ') + this.app.formatDate(g.expire * 1000))
+                .fontSize(10)
+                .fontColor(g.expire * 1000 < Date.now() ? AppTheme.DANGER : AppTheme.TEXT_SUB)
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .margin({ top: 6 })
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -2050,6 +2080,13 @@ export struct ConfigTab {
   routingPage() {
     Scroll() {
       Column() {
+        if (this.app.connected) {
+          Text('当前已连接：修改设置后自动重连生效')
+            .fontSize(11)
+            .fontColor(AppTheme.TEXT_SUB)
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 10 })
+        }
         Column() {
           Row() {
             Column() {
@@ -2157,7 +2194,7 @@ export struct ConfigTab {
 
         this.domainList('强制代理域名', this.app.routeProxyDomains, true, '优先级高于 CN 直连，命中即走代理')
 
-        Text('修改后需重新连接 VPN 生效')
+        Text('修改设置后将自动重连生效')
           .fontSize(11)
           .fontColor(AppTheme.TEXT_WEAK)
           .width('100%')

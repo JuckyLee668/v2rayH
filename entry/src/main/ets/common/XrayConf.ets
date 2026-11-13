@@ -146,10 +146,16 @@ function buildProxyOutbound(s: ServerConfig): string {
   return body.substring(0, body.length - 1) + ',' + q('tag') + ':' + q('proxy') + '}';
 }
 
-const TUN_INBOUND: string = '{"tag":"tun-in","protocol":"tun","settings":{"name":"vpn-tun","mtu":1400,"userLevel":0}}';
+const TUN_INBOUND: string = '{"tag":"tun-in","protocol":"tun","settings":{"name":"vpn-tun","mtu":1400,"userLevel":0}'
+  + ',"sniffing":{"enabled":true,"destOverride":["http","tls"]}}';
 const LOCAL_PROXY_INBOUND: string = '{"tag":"http-in","protocol":"http","listen":"127.0.0.1","port":10809,"settings":{"auth":"noauth"}}';
 const DIRECT_OUTBOUND: string = '{"protocol":"freedom","tag":"direct"}';
 const BLOCK_OUTBOUND: string = '{"protocol":"blackhole","tag":"block"}';
+const DNS_OUT_OUTBOUND: string = '{"protocol":"dns","tag":"dns-out"}';
+const DNS_SECTION: string = '{"servers":['
+  + '{"address":"https://1.1.1.1/dns-query","domains":["geosite:geolocation-!cn"],"skipFallback":true},'
+  + '{"address":"https://223.5.5.5/dns-query"}'
+  + '],"queryStrategy":"UseIP"}';
 
 function toDomainRule(raw: string): string {
   let t = raw.trim();
@@ -176,6 +182,7 @@ function domainList(items: string[]): string {
 
 function buildRouting(r: RoutingOptions): string {
   let rules: string[] = [];
+  rules.push('{"type":"field","inboundTag":["tun-in"],"port":53,"outboundTag":"dns-out"}');
   rules.push('{"type":"field","inboundTag":["http-in"],"outboundTag":"proxy"}');
   rules.push('{"type":"field","ip":["geoip:private"],"outboundTag":"direct"}');
   if (r.blockAds) {
@@ -220,11 +227,12 @@ function buildVpnXrayConfig(proxyOutbound: string, logErrorPath: string, routing
     logCfg += ',' + q('error') + ':' + q(logErrorPath);
   }
   logCfg += '}';
-  let outbounds = proxyOutbound + ',' + DIRECT_OUTBOUND;
+  let outbounds = proxyOutbound + ',' + DIRECT_OUTBOUND + ',' + DNS_OUT_OUTBOUND;
   if (routing.blockAds) {
     outbounds += ',' + BLOCK_OUTBOUND;
   }
   return '{' + q('log') + ':' + logCfg
+    + ',' + q('dns') + ':' + DNS_SECTION
     + ',' + q('policy') + ':' + WEAK_LINK_POLICY
     + ',' + q('inbounds') + ':[' + TUN_INBOUND + ',' + LOCAL_PROXY_INBOUND + ']'
     + ',' + q('outbounds') + ':[' + outbounds + ']'

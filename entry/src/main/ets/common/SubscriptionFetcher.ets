@@ -3,9 +3,26 @@ import { BusinessError } from '@kit.BasicServicesKit';
 
 export class SubscriptionFetcher {
   static lastError: string = '';
+  static lastUserinfo: string = '';
+
+  private static extractUserinfo(header: Object): string {
+    let names: string[] = ['subscription-userinfo', 'Subscription-Userinfo', 'Subscription-Userinfo',
+      'SUBSCRIPTION-USERINFO'];
+    try {
+      let h = header as Record<string, string>;
+      for (let i = 0; i < names.length; i++) {
+        let v = h[names[i]];
+        if (typeof v === 'string' && v.trim().length > 0) {
+          return v.trim();
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
 
   static async fetchText(url: string): Promise<string> {
     SubscriptionFetcher.lastError = '';
+    SubscriptionFetcher.lastUserinfo = '';
     let req = http.createHttp();
     try {
       let resp = await req.request(url, {
@@ -18,6 +35,7 @@ export class SubscriptionFetcher {
       if (resp.responseCode === 200) {
         let data: string | Object | ArrayBuffer = resp.result;
         if (typeof data === 'string') {
+          SubscriptionFetcher.lastUserinfo = SubscriptionFetcher.extractUserinfo(resp.header);
           return data;
         }
         SubscriptionFetcher.lastError = 'result type mismatch';
@@ -37,6 +55,7 @@ export class SubscriptionFetcher {
   static async fetchThroughProxy(url: string, host: string, port: number,
     connectTimeoutMs: number = 5000, readTimeoutMs: number = 5000): Promise<string> {
     SubscriptionFetcher.lastError = '';
+    SubscriptionFetcher.lastUserinfo = '';
     let req = http.createHttp();
     let proxy: http.HttpProxy = { host: host, port: port, exclusionList: [] };
     try {
@@ -50,6 +69,7 @@ export class SubscriptionFetcher {
       if (resp.responseCode === 200) {
         let data: string | Object | ArrayBuffer = resp.result;
         if (typeof data === 'string') {
+          SubscriptionFetcher.lastUserinfo = SubscriptionFetcher.extractUserinfo(resp.header);
           return data;
         }
         SubscriptionFetcher.lastError = 'result type mismatch';

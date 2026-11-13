@@ -160,22 +160,42 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     }
 
     let config: vpnExtension.VpnConfig = {
-      addresses: [{
-        address: { address: '10.0.0.5', family: 1 },
-        prefixLength: 24
-      }],
-      routes: [{
-        interface: 'vpn-tun',
-        destination: {
-          address: { address: '0.0.0.0', family: 1 },
-          prefixLength: 0
+      addresses: [
+        {
+          address: { address: '10.0.0.5', family: 1 },
+          prefixLength: 24
         },
-        gateway: { address: '', family: 1 },
-        hasGateway: false,
-        isDefaultRoute: true
-      }],
-      dnsAddresses: ['8.8.8.8', '8.8.4.4'],
-      mtu: 1400
+        {
+          address: { address: 'fd00::5', family: 2 },
+          prefixLength: 64
+        }
+      ],
+      routes: [
+        {
+          interface: 'vpn-tun',
+          destination: {
+            address: { address: '0.0.0.0', family: 1 },
+            prefixLength: 0
+          },
+          gateway: { address: '', family: 1 },
+          hasGateway: false,
+          isDefaultRoute: true
+        },
+        {
+          interface: 'vpn-tun',
+          destination: {
+            address: { address: '::', family: 2 },
+            prefixLength: 0
+          },
+          gateway: { address: '', family: 2 },
+          hasGateway: false,
+          isDefaultRoute: true
+        }
+      ],
+      dnsAddresses: ['8.8.8.8', '8.8.4.4', '2001:4860:4860::8888'],
+      mtu: 1400,
+      isIPv4Accepted: true,
+      isIPv6Accepted: true
     };
 
     let perApp = this.readPerApp();
