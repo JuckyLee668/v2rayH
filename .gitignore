@@ -26,3 +26,7 @@
 /dist/
 /entry/libs/
 /.deveco/
+
+# local build logs & test screenshots
+/build_output.log
+/screen_v6.jpeg
