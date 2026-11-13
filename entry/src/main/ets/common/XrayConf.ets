@@ -154,7 +154,8 @@ const BLOCK_OUTBOUND: string = '{"protocol":"blackhole","tag":"block"}';
 const DNS_OUT_OUTBOUND: string = '{"protocol":"dns","tag":"dns-out"}';
 const DNS_SECTION: string = '{"servers":['
   + '{"address":"https://1.1.1.1/dns-query","domains":["geosite:geolocation-!cn"],"skipFallback":true},'
-  + '{"address":"https://223.5.5.5/dns-query"}'
+  + '{"address":"https://8.8.8.8/dns-query","domains":["geosite:geolocation-!cn"],"skipFallback":true},'
+  + '{"address":"223.5.5.5"}'
   + '],"queryStrategy":"UseIP"}';
 
 function toDomainRule(raw: string): string {
@@ -184,6 +185,7 @@ function buildRouting(r: RoutingOptions): string {
   let rules: string[] = [];
   rules.push('{"type":"field","inboundTag":["tun-in"],"port":53,"outboundTag":"dns-out"}');
   rules.push('{"type":"field","inboundTag":["http-in"],"outboundTag":"proxy"}');
+  rules.push('{"type":"field","ip":["223.5.5.5"],"outboundTag":"direct"}');
   rules.push('{"type":"field","ip":["geoip:private"],"outboundTag":"direct"}');
   if (r.blockAds) {
     rules.push('{"type":"field","domain":["geosite:category-ads-all"],"outboundTag":"block"}');
