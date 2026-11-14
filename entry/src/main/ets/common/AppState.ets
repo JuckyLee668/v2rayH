@@ -36,9 +36,7 @@ const F_VPN_LOG: string = 'vpn.log';
 const F_XRAY_LOG: string = 'xray_error.log';
 const F_MULTI: string = 'multi_select.json';
 const F_SINGBOX_CONFIG: string = 'singbox_config.json';
-
 const PING_CONCURRENCY: number = 16;
-const CHAINED_PING_TIMEOUT_MS: number = 10000;
 
 const FAILOVER_CHECK_MS: number = 45000;
 const FAILOVER_FAIL_LIMIT: number = 2;
@@ -70,6 +68,7 @@ class PrefsOptions {
   keepAlive: boolean = false;
   speedTestMB: number = 20;
   speedTestConcurrency: number = 3;
+  pingTimeoutSec: number = 10;
 }
 
 class PerAppOptions {
@@ -150,6 +149,8 @@ export class AppState {
   speedTestMB: number = 20;
   // 下载测速同时测试的节点数，节点多时成倍缩短总耗时
   speedTestConcurrency: number = 3;
+  // 延迟测试单节点超时（秒），超时记为“超时”
+  pingTimeoutSec: number = 10;
   // 后台保活：连接期间申请 DATA_TRANSFER 长时任务，防止退后台后进程被冻结
   keepAlive: boolean = false;
   private keepAliveTaskOn: boolean = false;
@@ -229,6 +230,7 @@ export class AppState {
         this.keepAlive = p.keepAlive === true;
         this.speedTestMB = this.normalizeSpeedTestMB(p.speedTestMB);
         this.speedTestConcurrency = this.normalizeSpeedTestConcurrency(p.speedTestConcurrency);
+        this.pingTimeoutSec = this.normalizePingTimeoutSec(p.pingTimeoutSec);
       } catch (e) {
         console.error('parse prefs failed: ' + JSON.stringify(e));
       }
@@ -243,6 +245,7 @@ export class AppState {
     p.keepAlive = this.keepAlive;
     p.speedTestMB = this.speedTestMB;
     p.speedTestConcurrency = this.speedTestConcurrency;
+    p.pingTimeoutSec = this.pingTimeoutSec;
     this.store.writeText(F_PREFS, JSON.stringify(p));
   }
 
@@ -474,6 +477,21 @@ export class AppState {
 
   setSpeedTestConcurrency(n: number): void {
     this.speedTestConcurrency = this.normalizeSpeedTestConcurrency(n);
+    this.savePrefs();
+  }
+
+  private normalizePingTimeoutSec(v: number): number {
+    if (typeof v !== 'number' || isNaN(v) || v < 3) {
+      return 10;
+    }
+    if (v > 30) {
+      return 30;
+    }
+    return Math.round(v);
+  }
+
+  setPingTimeoutSec(sec: number): void {
+    this.pingTimeoutSec = this.normalizePingTimeoutSec(sec);
     this.savePrefs();
   }
 
@@ -1655,29 +1673,25 @@ export class AppState {
           break;
         }
         let chunk: number[] = targets.slice(c, c + PING_CONCURRENCY);
-        let jobs: Promise<number>[] = [];
+        let settles: Promise<void>[] = [];
         for (let j = 0; j < chunk.length; j++) {
           let idx = chunk[j];
+          let job: Promise<number>;
           if (this.isNodeSingbox(idx)) {
-            jobs.push(this.chainedPingServer(this.servers[idx], TEST_SINGBOX_PORT + 1 + sbPortOffset));
+            job = this.chainedPingServer(this.servers[idx], TEST_SINGBOX_PORT + 1 + sbPortOffset);
             sbPortOffset++;
           } else {
-            jobs.push(this.chainedPingServer(this.servers[idx]));
+            job = this.chainedPingServer(this.servers[idx]);
           }
+          settles.push(job.then((ms: number): void => {
+            this.applyPingResult(idx, ms);
+            done++;
+            if (!this.pingStopRequested) {
+              this.status = '正在测延迟 ' + done.toString() + '/' + targets.length.toString() + '...';
+            }
+          }));
         }
-        let results: number[] = await Promise.all(jobs);
-        let copy: number[] = [];
-        for (let j = 0; j < this.pings.length; j++) {
-          copy.push(this.pings[j]);
-        }
-        for (let j = 0; j < chunk.length; j++) {
-          copy[chunk[j]] = results[j];
-        }
-        this.pings = copy;
-        done += chunk.length;
-        if (!this.pingStopRequested) {
-          this.status = '正在测延迟 ' + done.toString() + '/' + targets.length.toString() + '...';
-        }
+        await Promise.all(settles);
       }
       if (stopped) {
         let copy: number[] = [];
@@ -1703,9 +1717,18 @@ export class AppState {
     }
   }
 
+  private applyPingResult(idx: number, ms: number): void {
+    let copy: number[] = [];
+    for (let j = 0; j < this.pings.length; j++) {
+      copy.push(this.pings[j]);
+    }
+    copy[idx] = ms >= 0 ? ms : -1;
+    this.pings = copy;
+  }
+
   private async chainedPingServer(srv: ServerConfig, singboxListenPort: number = TEST_SINGBOX_PORT): Promise<number> {
     let pair = buildTestConfigPair(srv, singboxListenPort);
-    let timeout: Promise<number> = sleepMs(CHAINED_PING_TIMEOUT_MS).then((): number => -999);
+    let timeout: Promise<number> = sleepMs(this.pingTimeoutSec * 1000).then((): number => -999);
     try {
       let ms: number = await Promise.race([
         testNapi.measureDelay(pair.xrayConfig, pair.singboxConfig, 'http://www.gstatic.com/generate_204'),

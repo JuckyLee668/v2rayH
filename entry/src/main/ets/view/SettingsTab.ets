@@ -151,7 +151,7 @@ export struct SettingsTab {
     Column({ space: 12 }) {
       this.navRow($r('sys.symbol.paintbrush_pointed_filled_circle'), '外观', '深色模式与主题色 · ' + this.app.darkModeText(), SET_APPEARANCE)
       this.navRow($r('sys.symbol.arrow_2_circlepath'), '连接', '启动自动连接 · 故障转移 · 后台保活', SET_CONN)
-      this.navRow($r('sys.symbol.timer_circle_fill'), '测速', '包大小 ' + this.app.speedTestMB.toString() + 'MB · 并发 ' + this.app.speedTestConcurrency.toString() + ' 节点', SET_SPEED)
+      this.navRow($r('sys.symbol.timer_circle_fill'), '测速', '包大小 ' + this.app.speedTestMB.toString() + 'MB · 并发 ' + this.app.speedTestConcurrency.toString() + ' · 延迟超时 ' + this.app.pingTimeoutSec.toString() + 's', SET_SPEED)
       this.navRow($r('sys.symbol.doc'), '备份与还原', '导出 / 导入配置', SET_BACKUP)
       this.navRow($r('sys.symbol.doc_plaintext'), '运行日志', '查看 VPN 与内核日志', SET_LOGS)
       this.navRow($r('sys.symbol.info_circle'), '关于', '版本与内核信息', SET_ABOUT)
@@ -657,7 +657,48 @@ export struct SettingsTab {
       .margin({ top: 14 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('包越大测速越准但耗时与流量消耗越多；先用 Cloudflare 测速文件，失败时回退 OVH。测速方法为先预热不计速、再测稳态速率，与 Speedtest 同类。并发大于 1 时多个节点同时下载会分抢带宽，测得的速率可能偏低，追求精确数值请选并发 1。')
+      Column() {
+        Text('延迟测试超时')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppTheme.TEXT)
+          .width('100%')
+        Text('测延迟时每个节点的最长等待时间，当前 ' + this.app.pingTimeoutSec.toString() + ' 秒')
+          .fontSize(11)
+          .fontColor(AppTheme.TEXT_SUB)
+          .margin({ top: 4 })
+          .width('100%')
+        Flex({ wrap: FlexWrap.Wrap }) {
+          SetChoiceChip({ label: '3秒', active: this.app.pingTimeoutSec === 3, onPick: () => {
+            this.app.setPingTimeoutSec(3);
+          } })
+          SetChoiceChip({ label: '5秒', active: this.app.pingTimeoutSec === 5, onPick: () => {
+            this.app.setPingTimeoutSec(5);
+          } })
+          SetChoiceChip({ label: '10秒', active: this.app.pingTimeoutSec === 10, onPick: () => {
+            this.app.setPingTimeoutSec(10);
+          } })
+          SetChoiceChip({ label: '15秒', active: this.app.pingTimeoutSec === 15, onPick: () => {
+            this.app.setPingTimeoutSec(15);
+          } })
+          SetChoiceChip({ label: '20秒', active: this.app.pingTimeoutSec === 20, onPick: () => {
+            this.app.setPingTimeoutSec(20);
+          } })
+          SetChoiceChip({ label: '30秒', active: this.app.pingTimeoutSec === 30, onPick: () => {
+            this.app.setPingTimeoutSec(30);
+          } })
+        }
+        .width('100%')
+        .margin({ top: 4 })
+      }
+      .width('100%')
+      .padding(16)
+      .backgroundColor(AppTheme.CARD_BG)
+      .borderRadius(AppTheme.CARD_RADIUS)
+      .margin({ top: 14 })
+      .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
+
+      Text('包越大测速越准但耗时与流量消耗越多；先用 Cloudflare 测速文件，失败时回退 OVH。测速方法为先预热不计速、再测稳态速率，与 Speedtest 同类。并发大于 1 时多个节点同时下载会分抢带宽，测得的速率可能偏低，追求精确数值请选并发 1。延迟超时越短总耗时越短，但弱节点可能被误判为超时；测延迟时结果完成一个显示一个。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')
