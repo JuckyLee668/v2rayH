@@ -46,6 +46,10 @@ const FAILOVER_COOLDOWN_MS: number = 120000;
 const FAILOVER_PROBE_TIMEOUT_MS: number = 15000;
 const LOG_TAIL_LINES: number = 400;
 
+const VPN_WATCHDOG_INTERVAL_MS: number = 10000;
+const VPN_HEARTBEAT_STALE_MS: number = 35000;
+const VPN_START_GRACE_MS: number = 30000;
+
 const SOCKS_HOST: string = '127.0.0.1';
 const SOCKS_PORT: number = 10809;
 
@@ -154,6 +158,11 @@ export class AppState {
   private failoverCooldownUntil: number = 0;
   private failoverSwitchCount: number = 0;
   private failoverChecking: boolean = false;
+  private vpnWatchdogTimerId: number = -1;
+  private vpnWatchdogMisses: number = 0;
+  private vpnWatchdogBusy: boolean = false;
+  private vpnIntentionalRestart: boolean = false;
+  private vpnLastStartAt: number = 0;
   private statsBaseRx: number = -1;
   private statsBaseTx: number = -1;
   private appUid: number = -1;
@@ -311,6 +320,131 @@ export class AppState {
     } catch (e) {
       console.error('stop keep-alive task failed: ' + JSON.stringify(e));
     }
+  }
+
+  // ---------- vpn watchdog ----------
+
+  private vpnExtensionHealthy(): boolean {
+    let ctx = AppContextHolder.get();
+    if (ctx === undefined) {
+      return true;
+    }
+    try {
+      let path = ctx.filesDir + '/heartbeat.txt';
+      if (!fs.accessSync(path)) {
+        return false;
+      }
+      let stat = fs.statSync(path);
+      if (stat.size <= 0) {
+        return false;
+      }
+      let f = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fs.readSync(f.fd, buf);
+      fs.closeSync(f);
+      let ts: number = Number(buffer.from(buf).toString('utf-8').trim());
+      if (isNaN(ts) || ts <= 0) {
+        return false;
+      }
+      return Date.now() - ts < VPN_HEARTBEAT_STALE_MS;
+    } catch (e) {
+      console.error('vpnExtensionHealthy check failed: ' + JSON.stringify(e));
+      return true;
+    }
+  }
+
+  private startVpnWatchdog(): void {
+    if (!this.connected) {
+      return;
+    }
+    if (this.vpnWatchdogTimerId >= 0) {
+      return;
+    }
+    this.vpnWatchdogMisses = 0;
+    this.vpnWatchdogTimerId = setInterval(() => {
+      this.checkVpnAlive();
+    }, VPN_WATCHDOG_INTERVAL_MS);
+  }
+
+  private stopVpnWatchdog(): void {
+    if (this.vpnWatchdogTimerId >= 0) {
+      clearInterval(this.vpnWatchdogTimerId);
+      this.vpnWatchdogTimerId = -1;
+    }
+    this.vpnWatchdogMisses = 0;
+  }
+
+  private async checkVpnAlive(): Promise<void> {
+    if (!this.connected || this.vpnIntentionalRestart || this.vpnWatchdogBusy) {
+      return;
+    }
+    if (Date.now() - this.vpnLastStartAt < VPN_START_GRACE_MS) {
+      return;
+    }
+    let healthy: boolean = this.vpnExtensionHealthy();
+    if (healthy) {
+      this.vpnWatchdogMisses = 0;
+      return;
+    }
+    this.vpnWatchdogMisses++;
+    if (this.vpnWatchdogMisses < 2) {
+      return;
+    }
+    this.vpnWatchdogMisses = 0;
+    await this.recoverVpnExtension();
+  }
+
+  private async recoverVpnExtension(): Promise<void> {
+    if (!this.connected || this.vpnIntentionalRestart || this.vpnWatchdogBusy) {
+      return;
+    }
+    this.vpnWatchdogBusy = true;
+    this.appendRuntimeLog('[vpn] 检测到 VPN 扩展心跳超时，正在自动重启');
+    this.status = 'VPN 扩展无响应，正在自动重启...';
+    try {
+      await vpnExtension.stopVpnExtensionAbility(VPN_WANT);
+    } catch (e) {
+      console.error('stopVpn during watchdog recover failed: ' + JSON.stringify(e));
+    }
+    await sleepMs(500);
+    let ok = await this.startVpnWithRetry(3);
+    if (ok) {
+      this.vpnLastStartAt = Date.now();
+      this.status = '';
+      this.refreshExitIp();
+      this.startKeepAliveTask();
+      this.beginTrafficSession();
+      this.appendRuntimeLog('[vpn] VPN 扩展自动重启成功');
+    } else {
+      this.connected = false;
+      this.ipBusy = false;
+      this.endTrafficSession();
+      this.stopFailoverMonitor();
+      this.stopKeepAliveTask();
+      this.stopVpnWatchdog();
+      this.status = 'VPN 已被系统终止，自动重启失败，请手动重连';
+      this.appendRuntimeLog('[vpn] VPN 扩展自动重启失败');
+    }
+    this.vpnWatchdogBusy = false;
+  }
+
+  async onAppStartVpnCheck(): Promise<void> {
+    if (this.connected) {
+      return;
+    }
+    if (this.vpnExtensionHealthy()) {
+      this.appendRuntimeLog('[vpn] 检测到 VPN 扩展仍在运行，恢复连接状态');
+      this.connected = true;
+      this.vpnLastStartAt = Date.now();
+      this.status = '';
+      this.startFailoverMonitor();
+      this.startVpnWatchdog();
+      this.beginTrafficSession();
+      this.startKeepAliveTask();
+      this.refreshExitIp();
+      return;
+    }
+    this.maybeAutoConnect();
   }
 
   private normalizeSpeedTestMB(v: number): number {
@@ -1058,6 +1192,7 @@ export class AppState {
     this.ipError = '';
     this.ipBusy = true;
     this.status = '正在切换到: ' + this.nodeName();
+    this.vpnIntentionalRestart = true;
     try {
       await vpnExtension.stopVpnExtensionAbility(VPN_WANT);
     } catch (e) {
@@ -1065,20 +1200,24 @@ export class AppState {
     }
     await sleepMs(600);
     let ok = await this.startVpnWithRetry(3);
+    this.vpnIntentionalRestart = false;
     if (ok) {
       this.connected = true;
+      this.vpnLastStartAt = Date.now();
       this.status = '';
       this.failoverCooldownUntil = 0;
       this.startFailoverMonitor();
       this.beginTrafficSession();
       this.refreshExitIp();
       this.startKeepAliveTask();
+      this.startVpnWatchdog();
     } else {
       this.connected = false;
       this.ipBusy = false;
       this.endTrafficSession();
       this.stopFailoverMonitor();
       this.stopKeepAliveTask();
+      this.stopVpnWatchdog();
       this.status = '切换节点失败，请重试';
     }
   }
@@ -1800,6 +1939,7 @@ export class AppState {
     let ok = await this.startVpnWithRetry(2);
     if (ok) {
       this.connected = true;
+      this.vpnLastStartAt = Date.now();
       this.status = '';
       this.failoverSwitchCount = 0;
       this.failoverCooldownUntil = 0;
@@ -1807,12 +1947,14 @@ export class AppState {
       this.beginTrafficSession();
       this.refreshExitIp();
       this.startKeepAliveTask();
+      this.startVpnWatchdog();
     } else {
       this.connected = false;
       this.ipBusy = false;
       this.endTrafficSession();
       this.stopFailoverMonitor();
       this.stopKeepAliveTask();
+      this.stopVpnWatchdog();
       this.status = '连接失败，请重试';
     }
   }
@@ -1823,12 +1965,16 @@ export class AppState {
     this.ipBusy = false;
     this.stopFailoverMonitor();
     this.stopKeepAliveTask();
+    this.stopVpnWatchdog();
     this.failoverSwitchCount = 0;
+    this.vpnIntentionalRestart = true;
     vpnExtension.stopVpnExtensionAbility(VPN_WANT).then(() => {
       this.connected = false;
+      this.vpnIntentionalRestart = false;
       this.endTrafficSession();
       this.status = '已断开';
     }).catch((err: BusinessError) => {
+      this.vpnIntentionalRestart = false;
       this.status = '断开失败: ' + JSON.stringify(err);
     });
   }
@@ -1906,6 +2052,7 @@ export class AppState {
     this.ipError = '';
     this.ipBusy = true;
     this.status = '正在应用分流设置';
+    this.vpnIntentionalRestart = true;
     try {
       await vpnExtension.stopVpnExtensionAbility(VPN_WANT);
     } catch (e) {
@@ -1913,16 +2060,20 @@ export class AppState {
     }
     await sleepMs(600);
     let ok = await this.startVpnWithRetry(3);
+    this.vpnIntentionalRestart = false;
     if (ok) {
       this.connected = true;
+      this.vpnLastStartAt = Date.now();
       this.status = '';
       this.refreshExitIp();
+      this.startVpnWatchdog();
     } else {
       this.connected = false;
       this.ipBusy = false;
       this.endTrafficSession();
       this.stopFailoverMonitor();
       this.stopKeepAliveTask();
+      this.stopVpnWatchdog();
       this.status = '应用分流设置失败，请重连';
     }
   }

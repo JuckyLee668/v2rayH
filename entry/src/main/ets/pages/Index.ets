@@ -56,7 +56,7 @@ struct Index {
     let ctx = this.getUIContext().getHostContext();
     if (ctx !== undefined) {
       this.app.init(ctx);
-      this.app.maybeAutoConnect();
+      this.app.onAppStartVpnCheck();
       this.app.maybeAutoUpdateSubs();
     }
   }

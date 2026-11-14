@@ -1,5 +1,6 @@
 import { VpnExtensionAbility, vpnExtension } from '@kit.NetworkKit';
-import { Want } from '@kit.AbilityKit';
+import { Want, wantAgent, WantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
 import testNapi from 'libentry.so';
@@ -18,6 +19,7 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
   private logFile: string = '';
   private configFile: string = '';
   private singboxConfigFile: string = '';
+  private heartbeatTimerId: number = -1;
 
   private log(msg: string): void {
     console.info('MyVpnExtAbility: ' + msg);
@@ -99,11 +101,32 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     }
     this.rotateLog();
     this.log('=== onCreate ===');
+    this.startOwnKeepAliveTask();
     this.setupVpn();
+  }
+
+  private async startOwnKeepAliveTask(): Promise<void> {
+    try {
+      let wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [{
+          bundleName: SELF_BUNDLE,
+          abilityName: 'EntryAbility'
+        }],
+        operationType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0
+      };
+      let agent: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
+      await backgroundTaskManager.startBackgroundRunning(this.context,
+        backgroundTaskManager.BackgroundMode.DATA_TRANSFER, agent);
+      this.log('extension keep-alive task started');
+    } catch (e) {
+      this.log('extension keep-alive task not started: ' + JSON.stringify(e));
+    }
   }
 
   onDestroy(): void {
     this.log('=== onDestroy ===');
+    this.stopHeartbeat();
     testNapi.stopVpn();
     testNapi.stopSingbox();
     if (this.vpnConnection) {
@@ -241,6 +264,40 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     });
   }
 
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.writeHeartbeat();
+    this.heartbeatTimerId = setInterval(() => {
+      this.writeHeartbeat();
+    }, 10000);
+  }
+
+  private writeHeartbeat(): void {
+    try {
+      let path = this.context.filesDir + '/heartbeat.txt';
+      let f = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      fs.writeSync(f.fd, Date.now().toString());
+      fs.closeSync(f);
+    } catch (e) {
+      console.error('write heartbeat failed: ' + JSON.stringify(e));
+    }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimerId >= 0) {
+      clearInterval(this.heartbeatTimerId);
+      this.heartbeatTimerId = -1;
+    }
+    try {
+      let path = this.context.filesDir + '/heartbeat.txt';
+      if (fs.accessSync(path)) {
+        fs.unlinkSync(path);
+      }
+    } catch (e) {
+      console.error('remove heartbeat failed: ' + JSON.stringify(e));
+    }
+  }
+
   private startKernel(fd: number, xrayConfig: string, singboxConfig: string): void {
     if (singboxConfig.length > 0) {
       let sbCode: number = testNapi.startSingbox(singboxConfig);
@@ -252,5 +309,8 @@ export default class MyVpnExtAbility extends VpnExtensionAbility {
     }
     let code: number = testNapi.startVpnTun(fd, xrayConfig, this.context.filesDir + '/geo');
     this.log('startVpnTun code=' + code.toString() + ' lastErr=' + testNapi.getLastError());
+    if (code === 0) {
+      this.startHeartbeat();
+    }
   }
 }
