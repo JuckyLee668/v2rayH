@@ -620,7 +620,9 @@ export struct ConfigTab {
           .onClick(() => {
             this.app.selectGroup(idx);
           })
-        }, (g: SubGroup, idx: number) => g.id + '|' + idx.toString())
+        }, (g: SubGroup, idx: number) => g.id + '|' + idx.toString() + '|' + g.updatedAt.toString() + '|'
+          + g.total.toString() + '|' + g.upload.toString() + '|' + g.download.toString() + '|'
+          + g.expire.toString() + '|' + g.nodes.length.toString())
       }
       .width('100%')
       .layoutWeight(1)

@@ -2563,6 +2563,10 @@ export class AppState {
     let kb = 1024;
     let mb = 1024 * 1024;
     let gb = 1024 * 1024 * 1024;
+    let tb = 1024 * 1024 * 1024 * 1024;
+    if (bytes >= tb) {
+      return (bytes / tb).toFixed(2) + ' TB';
+    }
     if (bytes >= gb) {
       return (bytes / gb).toFixed(2) + ' GB';
     }
