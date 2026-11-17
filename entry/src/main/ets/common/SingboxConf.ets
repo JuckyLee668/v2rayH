@@ -12,7 +12,11 @@ export function usesSingboxKernel(s: ServerConfig): boolean {
   if (s.kernel === 'xray') {
     return false;
   }
-  return s.protocol === 'hy2' || s.protocol === 'tuic' || s.protocol === 'anytls';
+  if (s.protocol === 'tuic' || s.protocol === 'anytls') {
+    return true;
+  }
+  // hy2 默认由 Xray 承载；仅当需要跳过证书校验时保留 sing-box（新版 Xray 已移除 allowInsecure）
+  return s.protocol === 'hy2' && s.insecure;
 }
 
 function tlsFields(s: ServerConfig): string[] {

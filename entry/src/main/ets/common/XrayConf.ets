@@ -110,6 +110,31 @@ function buildStreamSettings(s: ServerConfig): string {
   return '{' + parts.join(',') + '}';
 }
 
+function buildHysteriaStreamSettings(s: ServerConfig): string {
+  let parts: string[] = [];
+  parts.push(q('network') + ':' + q('hysteria'));
+  parts.push(q('security') + ':' + q('tls'));
+  let ts = '{' + q('serverName') + ':' + q(s.sni)
+    + ',' + q('alpn') + ':' + alpnArray(s.alpn.length > 0 ? s.alpn : 'h3') + '}';
+  parts.push(q('tlsSettings') + ':' + ts);
+  parts.push(q('hysteriaSettings') + ':{' + q('version') + ':2,' + q('auth') + ':' + q(s.password)
+    + ',' + q('udpIdleTimeout') + ':60}');
+  let masks: string[] = [];
+  if (s.obfs.length > 0) {
+    masks.push('{' + q('type') + ':' + q('salamander') + ',' + q('settings') + ':{'
+      + q('password') + ':' + q(s.obfsPassword) + '}}');
+  }
+  if (s.ports.length > 0) {
+    masks.push('{' + q('type') + ':' + q('udphop') + ',' + q('settings') + ':{'
+      + q('mode') + ':' + q('intervallocal,intervalremote') + ',' + q('interval') + ':30,'
+      + q('remotePorts') + ':' + q(s.ports) + '}}');
+  }
+  if (masks.length > 0) {
+    parts.push(q('finalmask') + ':{' + q('udp') + ':[' + masks.join(',') + ']}');
+  }
+  return '{' + parts.join(',') + '}';
+}
+
 function buildProxyOutbound(s: ServerConfig): string {
   let stream = buildStreamSettings(s);
   let body = '';
@@ -140,6 +165,11 @@ function buildProxyOutbound(s: ServerConfig): string {
     server += '}';
     body = '{' + q('protocol') + ':' + q(s.protocol) + ',' + q('settings') + ':{' + q('servers') + ':[' + server + ']}'
       + ',' + q('streamSettings') + ':' + stream + '}';
+  } else if (s.protocol === 'hy2') {
+    let settings = '{' + q('version') + ':2,' + q('address') + ':' + q(s.address) + ','
+      + q('port') + ':' + s.port.toString() + '}';
+    body = '{' + q('protocol') + ':' + q('hysteria') + ',' + q('settings') + ':' + settings
+      + ',' + q('streamSettings') + ':' + buildHysteriaStreamSettings(s) + '}';
   } else {
     body = '{' + q('protocol') + ':' + q('freedom') + '}';
   }

@@ -3,19 +3,19 @@
 [v2rayNG](https://github.com/2dust/v2rayNG) 的 HarmonyOS / OpenHarmony 移植版：
 一个 VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS 客户端，
 双内核设计 —— [Xray-core](https://github.com/xtls/xray-core) 永远接管 tun，
-[sing-box](https://github.com/SagerNet/sing-box) 作为可选内核经本机链式转发承载
-hy2 / tuic / anytls 等协议，通过系统 VPN 接口接管全部流量。
+并原生承载 hy2 等协议；[sing-box](https://github.com/SagerNet/sing-box)
+作为可选内核经本机链式转发承载 tuic / anytls 等协议，通过系统 VPN 接口接管全部流量。
 
 流量路径：
 
 ```
-Xray 系节点：
+Xray 系节点（vless / vmess / trojan / ss / hy2 等）：
 应用 ──► vpn-tun (VpnExtensionAbility) ──► 轻量用户态网络栈 (L3→L4)
-      ──► Xray VLESS+REALITY 出站 ──► 互联网
+      ──► Xray VLESS+REALITY / Hysteria2 出站 ──► 互联网
 
-sing-box 系节点（hy2 / tuic / anytls / 手动指定内核）：
+sing-box 系节点（tuic / anytls / 手动指定内核）：
 应用 ──► vpn-tun ──► 用户态网络栈 ──► Xray socks 出站 (127.0.0.1:10810)
-      ──► sing-box mixed 入站 ──► Hysteria2 / TUIC / AnyTLS 出站 ──► 互联网
+      ──► sing-box mixed 入站 ──► TUIC / AnyTLS 出站 ──► 互联网
 ```
 ![](intro.png)
 
@@ -23,8 +23,8 @@ sing-box 系节点（hy2 / tuic / anytls / 手动指定内核）：
 
 ### 协议与传输
 
-- VLESS / VMess / Trojan / Shadowsocks 协议支持（Xray v26.11.9 内核）
-- Hysteria2 / TUIC / AnyTLS 协议支持（sing-box v1.14.4 内核，链式架构）
+- VLESS / VMess / Trojan / Shadowsocks / Hysteria2 协议支持（Xray v26.11.9 内核）
+- TUIC / AnyTLS 协议支持（sing-box v1.14.4 内核，链式架构）
 - 传输层：TCP（含 HTTP 伪装）/ WebSocket / gRPC / httpupgrade / XHTTP /
   mKCP（headerType 伪装与 seed 密钥），协议与传输自由组合
 - TLS / REALITY / uTLS 指纹 / SNI / ALPN / 允许不安全证书等逐项可调；
@@ -35,8 +35,8 @@ sing-box 系节点（hy2 / tuic / anytls / 手动指定内核）：
 
 ### 内核
 
-- 双内核：Xray 永远接管 tun；sing-box 经本机链式转发承载 sing-box 系协议
-- 每节点可手动指定运行内核（自动 / Xray / sing-box；hy2、tuic、anytls 始终走 sing-box）
+- 双内核：Xray 永远接管 tun 并承载 hy2 等协议；sing-box 经本机链式转发承载 tuic / anytls
+- 每节点可手动指定运行内核（自动 / Xray / sing-box；tuic、anytls 始终走 sing-box）
 - 关于页展示双内核编译期版本号
 
 ### 节点与订阅

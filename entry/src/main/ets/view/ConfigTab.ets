@@ -1250,7 +1250,7 @@ export struct ConfigTab {
       return false;
     }
     let p: string = nodes[this.editIdx].protocol;
-    return p === 'hy2' || p === 'tuic' || p === 'anytls';
+    return p === 'hy2' && this.eInsecure;
   }
 
   private saveNodeEdit(): void {
@@ -1496,7 +1496,7 @@ export struct ConfigTab {
           .width('100%')
           .margin({ top: 4 })
 
-          Text('hy2 / tuic / anytls 节点始终由 sing-box 承载；其余协议可在此手动指定内核')
+          Text('tuic / anytls 节点始终由 sing-box 承载；hy2 默认由 Xray 承载（跳过证书校验时自动改用 sing-box），其余协议可在此手动指定内核')
             .fontSize(11)
             .fontColor(AppTheme.TEXT_WEAK)
             .width('100%')
@@ -1825,7 +1825,7 @@ export struct ConfigTab {
             .width('100%')
             .margin({ top: 4 })
             if (this.isSingboxProtocol()) {
-              Text('hy2 / tuic / anytls 由 sing-box 内核承载，TLS 为协议内置，无需单独配置')
+              Text('tuic / anytls 由 sing-box 内核承载；hy2 默认由 Xray 承载（开启跳过证书验证时改用 sing-box）。TLS 为协议内置，无需单独配置')
                 .fontSize(11)
                 .fontColor(AppTheme.TEXT_WEAK)
                 .width('100%')

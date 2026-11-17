@@ -209,7 +209,7 @@ export struct SettingsTab {
       .margin({ top: 18 })
       .shadow({ radius: 14, color: '#10000000', offsetY: 3 })
 
-      Text('双内核：Xray 负责 tun 接管与路由；hy2 / tuic / anytls 等协议由 sing-box 经本机链式转发承载，版本号在编译期写入。')
+      Text('双内核：Xray 负责 tun 接管与路由，并承载 hy2 等协议；tuic / anytls 由 sing-box 经本机链式转发承载，版本号在编译期写入。')
         .fontSize(11)
         .fontColor(AppTheme.TEXT_WEAK)
         .width('100%')
